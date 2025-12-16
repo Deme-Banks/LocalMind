@@ -137,16 +137,67 @@ class OllamaBackend(BaseBackend):
                 async for line in response.content:
                     if line:
                         try:
-                            data = json.loads(line)
+                            # Decode bytes to string
+                            line_str = line.decode('utf-8') if isinstance(line, bytes) else line
+                            data = json.loads(line_str)
                             if "response" in data:
                                 yield data["response"]
                             if data.get("done", False):
                                 break
-                        except json.JSONDecodeError:
+                        except (json.JSONDecodeError, UnicodeDecodeError):
                             continue
     
     def load_model(self, model: str) -> bool:
         """Load model (Ollama handles this automatically)"""
         # Ollama loads models on-demand, so we just check if it's available
         return model in self.list_models()
+    
+    def download_model(self, model: str) -> Dict[str, Any]:
+        """
+        Download a model via Ollama
+        
+        Args:
+            model: Model name to download
+        
+        Returns:
+            Dictionary with download information
+        """
+        import subprocess
+        import sys
+        import re
+        
+        try:
+            # Set up environment for UTF-8
+            env = os.environ.copy()
+            env['PYTHONIOENCODING'] = 'utf-8'
+            
+            # Run ollama pull command
+            process = subprocess.Popen(
+                ["ollama", "pull", model],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                bufsize=1,
+                env=env,
+                universal_newlines=False
+            )
+            
+            return {
+                "status": "started",
+                "process": process,
+                "model": model
+            }
+        except Exception as e:
+            return {
+                "status": "error",
+                "error": str(e)
+            }
+    
+    def get_backend_info(self) -> Dict[str, Any]:
+        """Get Ollama backend information"""
+        info = super().get_backend_info()
+        info.update({
+            "base_url": self.base_url,
+            "available": self.is_available()
+        })
+        return info
 

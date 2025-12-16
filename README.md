@@ -7,6 +7,9 @@ A lightweight, privacy-focused local AI that runs fully on your computer. Suppor
 - 🏠 **Fully Local**: Runs entirely on your machine, no cloud dependencies
 - 🔒 **Privacy-Focused**: No tracking, no data collection, complete control
 - 🤖 **Multiple Model Backends**: Support for various AI model formats
+- 🌐 **Web Interface**: Professional web UI accessible from any device
+- 📥 **Model Management**: Download and manage AI models from the web interface
+- 💬 **Streaming Chat**: Real-time streaming responses
 - 🧩 **Customizable Modules**: Extensible architecture for different use cases
 - 🛠️ **Offline Tools**: Automation, coding help, and text generation capabilities
 - ⚡ **Lightweight**: Minimal resource footprint
@@ -41,10 +44,47 @@ pip install -r requirements.txt
 
 ### Usage
 
+#### Command Line Interface
+
 ```bash
-# Run LocalMind
+# Run LocalMind CLI
 python main.py
+
+# Check status
+python main.py status
+
+# List available models
+python main.py models
+
+# Start interactive chat
+python main.py chat
+
+# Start web interface
+python main.py web
 ```
+
+#### Web Interface (Recommended)
+
+**Quick Start:**
+1. Double-click `start-web.bat` (or `start-web.ps1` for PowerShell)
+2. Open your browser to `http://localhost:5000`
+3. Start chatting!
+
+**Features:**
+- 🎨 Professional web interface accessible from any device
+- 🤖 Multiple AI models with easy switching
+- 📥 Download and manage models directly from the browser
+- 💬 Real-time streaming chat responses
+- 🌐 Network access - use from any device on your network
+
+**Control Scripts:**
+- `start-web.bat` - Simple batch script (double-click to start)
+- `start-web.ps1` - PowerShell script with IP detection
+- `start-web-advanced.bat` - Menu-driven script with multiple options
+
+See [CONTROL_SCRIPTS.md](CONTROL_SCRIPTS.md) for detailed information about the control scripts.
+
+For more information, see [WEB_INTERFACE.md](WEB_INTERFACE.md).
 
 ## Project Structure
 

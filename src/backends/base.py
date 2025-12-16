@@ -125,4 +125,30 @@ class BaseBackend(ABC):
             True if model unloaded successfully
         """
         return True
+    
+    def download_model(self, model: str) -> Dict[str, Any]:
+        """
+        Download a model (optional - not all backends support this)
+        
+        Args:
+            model: Model identifier to download
+        
+        Returns:
+            Dictionary with download status and information
+        """
+        raise NotImplementedError("This backend does not support model downloads")
+    
+    def get_backend_info(self) -> Dict[str, Any]:
+        """
+        Get information about this backend
+        
+        Returns:
+            Dictionary with backend information (name, type, capabilities, etc.)
+        """
+        return {
+            "name": self.name,
+            "type": self.__class__.__name__.replace("Backend", "").lower(),
+            "supports_download": hasattr(self, "download_model") and 
+                                 self.download_model.__func__ != BaseBackend.download_model
+        }
 

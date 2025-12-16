@@ -8,6 +8,12 @@ import logging
 
 from ..backends.base import BaseBackend, ModelResponse
 from ..backends.ollama import OllamaBackend
+from ..backends.openai import OpenAIBackend
+from ..backends.anthropic import AnthropicBackend
+from ..backends.google import GoogleBackend
+from ..backends.mistral_ai import MistralAIBackend
+from ..backends.cohere import CohereBackend
+from ..backends.groq import GroqBackend
 from ..utils.config import ConfigManager, LocalMindConfig
 
 
@@ -43,6 +49,48 @@ class ModelLoader:
                         logger.info(f"✅ Backend '{backend_name}' initialized")
                     else:
                         logger.warning(f"⚠️  Backend '{backend_name}' not available")
+                elif backend_config.type == "openai":
+                    backend = OpenAIBackend(backend_config.settings)
+                    if backend.is_available():
+                        self.backends[backend_name] = backend
+                        logger.info(f"✅ Backend '{backend_name}' initialized")
+                    else:
+                        logger.warning(f"⚠️  Backend '{backend_name}' not available (check API key)")
+                elif backend_config.type == "anthropic":
+                    backend = AnthropicBackend(backend_config.settings)
+                    if backend.is_available():
+                        self.backends[backend_name] = backend
+                        logger.info(f"✅ Backend '{backend_name}' initialized")
+                    else:
+                        logger.warning(f"⚠️  Backend '{backend_name}' not available (check API key)")
+                elif backend_config.type == "google":
+                    backend = GoogleBackend(backend_config.settings)
+                    if backend.is_available():
+                        self.backends[backend_name] = backend
+                        logger.info(f"✅ Backend '{backend_name}' initialized")
+                    else:
+                        logger.warning(f"⚠️  Backend '{backend_name}' not available (check API key)")
+                elif backend_config.type == "mistral-ai":
+                    backend = MistralAIBackend(backend_config.settings)
+                    if backend.is_available():
+                        self.backends[backend_name] = backend
+                        logger.info(f"✅ Backend '{backend_name}' initialized")
+                    else:
+                        logger.warning(f"⚠️  Backend '{backend_name}' not available (check API key)")
+                elif backend_config.type == "cohere":
+                    backend = CohereBackend(backend_config.settings)
+                    if backend.is_available():
+                        self.backends[backend_name] = backend
+                        logger.info(f"✅ Backend '{backend_name}' initialized")
+                    else:
+                        logger.warning(f"⚠️  Backend '{backend_name}' not available (check API key)")
+                elif backend_config.type == "groq":
+                    backend = GroqBackend(backend_config.settings)
+                    if backend.is_available():
+                        self.backends[backend_name] = backend
+                        logger.info(f"✅ Backend '{backend_name}' initialized")
+                    else:
+                        logger.warning(f"⚠️  Backend '{backend_name}' not available (check API key)")
                 # Add more backends here as they're implemented
                 # elif backend_config.type == "transformers":
                 #     backend = TransformersBackend(backend_config.settings)

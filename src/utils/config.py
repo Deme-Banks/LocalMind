@@ -34,13 +34,21 @@ class LocalMindConfig(BaseModel):
     backends: Dict[str, BackendConfig] = Field(default_factory=dict)
     models: Dict[str, ModelConfig] = Field(default_factory=dict)
     modules: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
-    storage_path: Path = Field(default=Path.home() / ".localmind")
+    storage_path: Path = Field(default_factory=lambda: Path.home() / ".localmind")
     log_level: str = Field(default="INFO")
     
     class Config:
         json_encoders = {
             Path: str
         }
+    
+    def dict(self, **kwargs):
+        """Override dict() to convert Path to string"""
+        data = super().dict(**kwargs)
+        # Convert Path objects to strings
+        if isinstance(data.get('storage_path'), Path):
+            data['storage_path'] = str(data['storage_path'])
+        return data
 
 
 class ConfigManager:
@@ -63,12 +71,97 @@ class ConfigManager:
         """Load configuration from file or create default"""
         if self.config_path.exists():
             try:
-                with open(self.config_path, 'r') as f:
-                    data = yaml.safe_load(f) or {}
+                with open(self.config_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                    # Try to fix old Path serialization if present
+                    import re
+                    # Pattern to match: storage_path: !!python/object/apply:pathlib._local.WindowsPath\n    - "path/string"
+                    # Replace with: storage_path: "path/string"
+                    content = re.sub(
+                        r'storage_path:\s*!!python/object/apply:pathlib\._local\.WindowsPath\s*\n\s*-\s*["\']([^"\']+)["\']',
+                        r'storage_path: "\1"',
+                        content,
+                        flags=re.MULTILINE
+                    )
+                    # Also handle pathlib.Path format
+                    content = re.sub(
+                        r'storage_path:\s*!!python/object/apply:pathlib\.Path\s*\n\s*-\s*["\']([^"\']+)["\']',
+                        r'storage_path: "\1"',
+                        content,
+                        flags=re.MULTILINE
+                    )
+                    # Handle any other Path serialization
+                    content = re.sub(
+                        r'!!python/object/apply:pathlib\._local\.WindowsPath\s*\n\s*-\s*["\']([^"\']+)["\']',
+                        r'"\1"',
+                        content,
+                        flags=re.MULTILINE
+                    )
+                    data = yaml.safe_load(content) or {}
+                
+                # Clean up any remaining Path object references
+                def clean_paths(obj):
+                    if isinstance(obj, dict):
+                        cleaned = {}
+                        for k, v in obj.items():
+                            if isinstance(v, dict) and any(key.startswith('__') for key in v.keys()):
+                                # This might be a serialized object, try to extract value
+                                if 'storage_path' in k.lower() or 'path' in k.lower():
+                                    # Try to find a string value
+                                    for subk, subv in v.items():
+                                        if isinstance(subv, str) and not subk.startswith('__'):
+                                            cleaned[k] = subv
+                                            break
+                                    else:
+                                        cleaned[k] = clean_paths(v)
+                                else:
+                                    cleaned[k] = clean_paths(v)
+                            else:
+                                cleaned[k] = clean_paths(v)
+                        return cleaned
+                    elif isinstance(obj, list):
+                        return [clean_paths(item) for item in obj]
+                    return obj
+                
+                data = clean_paths(data)
+                
+                # Convert storage_path string back to Path if present
+                if 'storage_path' in data:
+                    if isinstance(data['storage_path'], str):
+                        data['storage_path'] = Path(data['storage_path'])
+                    elif isinstance(data['storage_path'], dict):
+                        # Old serialized format, extract the path
+                        path_str = None
+                        for key in ['args', 'kwds', 'value']:
+                            if key in data['storage_path']:
+                                if isinstance(data['storage_path'][key], list) and len(data['storage_path'][key]) > 0:
+                                    path_str = data['storage_path'][key][0]
+                                    break
+                                elif isinstance(data['storage_path'][key], str):
+                                    path_str = data['storage_path'][key]
+                                    break
+                        if path_str:
+                            data['storage_path'] = Path(path_str)
+                        else:
+                            data['storage_path'] = Path.home() / ".localmind"
+                    elif not isinstance(data['storage_path'], Path):
+                        data['storage_path'] = Path.home() / ".localmind"
+                
                 self.config = LocalMindConfig(**data)
             except Exception as e:
-                print(f"⚠️  Error loading config: {e}")
-                print("📝 Creating default configuration...")
+                # Use ASCII-safe error message
+                error_msg = str(e)
+                print(f"Warning: Error loading config: {error_msg}")
+                print("Creating default configuration...")
+                # Backup old config if it exists
+                if self.config_path.exists():
+                    backup_path = self.config_path.with_suffix('.yaml.backup')
+                    try:
+                        import shutil
+                        shutil.copy2(self.config_path, backup_path)
+                        print(f"   Backed up old config to: {backup_path}")
+                    except:
+                        pass
                 self.config = self._create_default_config()
                 self.save_config()
         else:
@@ -85,6 +178,56 @@ class ConfigManager:
                     enabled=True,
                     settings={
                         "base_url": os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+                    }
+                ),
+                "openai": BackendConfig(
+                    type="openai",
+                    enabled=False,  # Disabled by default, requires API key
+                    settings={
+                        "api_key": os.getenv("OPENAI_API_KEY", ""),
+                        "base_url": os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+                        "organization": os.getenv("OPENAI_ORGANIZATION", "")
+                    }
+                ),
+                "anthropic": BackendConfig(
+                    type="anthropic",
+                    enabled=False,  # Disabled by default, requires API key
+                    settings={
+                        "api_key": os.getenv("ANTHROPIC_API_KEY", ""),
+                        "base_url": os.getenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com/v1"),
+                        "api_version": os.getenv("ANTHROPIC_API_VERSION", "2023-06-01")
+                    }
+                ),
+                "google": BackendConfig(
+                    type="google",
+                    enabled=False,  # Disabled by default, requires API key
+                    settings={
+                        "api_key": os.getenv("GOOGLE_API_KEY", ""),
+                        "base_url": os.getenv("GOOGLE_BASE_URL", "https://generativelanguage.googleapis.com/v1")
+                    }
+                ),
+                "mistral-ai": BackendConfig(
+                    type="mistral-ai",
+                    enabled=False,  # Disabled by default, requires API key
+                    settings={
+                        "api_key": os.getenv("MISTRAL_AI_API_KEY", ""),
+                        "base_url": os.getenv("MISTRAL_AI_BASE_URL", "https://api.mistral.ai/v1")
+                    }
+                ),
+                "cohere": BackendConfig(
+                    type="cohere",
+                    enabled=False,  # Disabled by default, requires API key
+                    settings={
+                        "api_key": os.getenv("COHERE_API_KEY", ""),
+                        "base_url": os.getenv("COHERE_BASE_URL", "https://api.cohere.ai/v1")
+                    }
+                ),
+                "groq": BackendConfig(
+                    type="groq",
+                    enabled=False,  # Disabled by default, requires API key
+                    settings={
+                        "api_key": os.getenv("GROQ_API_KEY", ""),
+                        "base_url": os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
                     }
                 )
             },
@@ -103,8 +246,24 @@ class ConfigManager:
         """Save configuration to file"""
         if self.config:
             self.config_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.config_path, 'w') as f:
-                yaml.dump(self.config.dict(), f, default_flow_style=False, sort_keys=False)
+            
+            # Convert config to dict and handle Path objects
+            config_dict = self.config.dict()
+            
+            # Convert Path objects to strings for YAML serialization
+            def convert_paths(obj):
+                if isinstance(obj, Path):
+                    return str(obj)
+                elif isinstance(obj, dict):
+                    return {k: convert_paths(v) for k, v in obj.items()}
+                elif isinstance(obj, list):
+                    return [convert_paths(item) for item in obj]
+                return obj
+            
+            config_dict = convert_paths(config_dict)
+            
+            with open(self.config_path, 'w', encoding='utf-8') as f:
+                yaml.dump(config_dict, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
     
     def get_config(self) -> LocalMindConfig:
         """Get current configuration"""

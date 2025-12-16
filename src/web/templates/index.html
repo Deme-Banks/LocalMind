@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LocalMind - Local AI Assistant</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-content">
+                <h1>🤖 LocalMind</h1>
+                <p class="subtitle">Privacy-Focused Local AI Assistant</p>
+            </div>
+            <div class="header-actions">
+                <button id="themeToggle" class="btn btn-secondary" title="Toggle dark mode" style="padding: 0.5rem; min-width: auto;">
+                    <span id="themeIcon">🌙</span>
+                </button>
+                <a href="/configure" class="btn btn-secondary" style="text-decoration: none; margin-right: 0.5rem;">Configure APIs</a>
+                <button class="btn btn-secondary" onclick="showModelManager()">Manage Models</button>
+                <div class="status-indicator" id="statusIndicator">
+                    <span class="status-dot"></span>
+                    <span id="statusText">Checking...</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <div class="main-content">
+            <!-- Sidebar -->
+            <aside class="sidebar">
+                <div class="sidebar-section">
+                    <h3>Model Selection</h3>
+                    <select id="modelSelect" class="model-select">
+                        <option value="">Loading models...</option>
+                    </select>
+                    <div class="model-info" id="modelInfo"></div>
+                </div>
+
+                <div class="sidebar-section">
+                    <h3>Settings</h3>
+                    <div class="setting-item">
+                        <label for="temperature">Temperature: <span id="tempValue">0.7</span></label>
+                        <input type="range" id="temperature" min="0" max="2" step="0.1" value="0.7" 
+                               oninput="document.getElementById('tempValue').textContent = this.value">
+                    </div>
+                    <div class="setting-item">
+                        <label>
+                            <input type="checkbox" id="streamMode" checked>
+                            Stream Responses
+                        </label>
+                    </div>
+                </div>
+
+                <div class="sidebar-section">
+                    <h3>System Prompt</h3>
+                    <textarea id="systemPrompt" class="system-prompt" 
+                              placeholder="You are a helpful AI assistant."></textarea>
+                </div>
+            </aside>
+
+            <!-- Chat Area -->
+            <main class="chat-area">
+                <div class="chat-messages" id="chatMessages">
+                    <div class="welcome-message">
+                        <h2>Welcome to LocalMind</h2>
+                        <p>Select a model and start chatting! Your conversations stay local and private.</p>
+                    </div>
+                </div>
+                <div class="chat-input-container">
+                    <textarea id="chatInput" class="chat-input" 
+                              placeholder="Type your message here..." 
+                              rows="1"></textarea>
+                    <button class="btn btn-primary" id="sendButton" onclick="sendMessage()">
+                        <span>Send</span>
+                    </button>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <!-- Model Manager Modal -->
+    <div id="modelManagerModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Model Manager</h2>
+                <button class="modal-close" onclick="closeModelManager()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="tabs">
+                    <button class="tab-btn active" onclick="showTab('installed')">Installed Models</button>
+                    <button class="tab-btn" onclick="showTab('available')">Available Models</button>
+                </div>
+
+                <div id="installedTab" class="tab-content active">
+                    <div class="search-box" style="margin-bottom: 1rem;">
+                        <input type="text" id="installedSearch" class="search-input" 
+                               placeholder="Search installed models..." 
+                               oninput="filterModels('installed', this.value)">
+                    </div>
+                    <div id="installedModelsList" class="models-list">
+                        <p>Loading installed models...</p>
+                    </div>
+                </div>
+
+                <div id="availableTab" class="tab-content">
+                    <div class="search-box" style="margin-bottom: 1rem;">
+                        <input type="text" id="availableSearch" class="search-input" 
+                               placeholder="Search available models..." 
+                               oninput="filterModels('available', this.value)">
+                    </div>
+                    <div id="availableModelsList" class="models-list">
+                        <p>Loading available models...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Download Progress Modal -->
+    <div id="downloadModal" class="modal">
+        <div class="modal-content small">
+            <div class="modal-header">
+                <h2>Downloading Model</h2>
+            </div>
+            <div class="modal-body">
+                <div id="downloadProgress">
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progressFill"></div>
+                    </div>
+                    <p id="downloadMessage">Starting download...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
+

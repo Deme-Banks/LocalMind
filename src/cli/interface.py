@@ -11,13 +11,24 @@ from rich.prompt import Prompt, Confirm
 from rich.markdown import Markdown
 from typing import Optional
 import sys
+import os
 
 from ..utils.config import ConfigManager
 from ..utils.logger import setup_logger
 from ..core.model_loader import ModelLoader
 
+# Configure console for Windows encoding issues
+if sys.platform == "win32":
+    # Set UTF-8 encoding for Windows console
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8')
+    if hasattr(sys.stderr, 'reconfigure'):
+        sys.stderr.reconfigure(encoding='utf-8')
+    # Use legacy_windows=False to avoid encoding issues
+    console = Console(legacy_windows=False, force_terminal=True)
+else:
+    console = Console()
 
-console = Console()
 logger = setup_logger()
 
 
@@ -54,7 +65,7 @@ def status(ctx):
     
     # Check backends
     for backend_name, backend in model_loader.backends.items():
-        status_icon = "✅" if backend.is_available() else "❌"
+        status_icon = "[green]OK[/green]" if backend.is_available() else "[red]FAIL[/red]"
         models = backend.list_models()
         table.add_row(
             f"Backend: {backend_name}",
@@ -65,8 +76,8 @@ def status(ctx):
     # Default model
     table.add_row(
         "Default Model",
-        "📌",
-        config.default_model
+        "[cyan]SET[/cyan]",
+        config.default_model or "Not set"
     )
     
     console.print(table)
@@ -80,7 +91,7 @@ def models(ctx):
     available_models = model_loader.list_available_models()
     
     if not available_models:
-        console.print("[yellow]⚠️  No models available. Make sure backends are configured.[/yellow]")
+        console.print("[yellow]Warning: No models available. Make sure backends are configured.[/yellow]")
         return
     
     for backend_name, models_list in available_models.items():
@@ -131,7 +142,7 @@ def chat(ctx, prompt, model, system, temperature, stream):
                 user_input = Prompt.ask("\n[bold cyan]You[/bold cyan]")
                 
                 if user_input.lower() in ["exit", "quit", "q"]:
-                    console.print("[yellow]Goodbye! 👋[/yellow]")
+                    console.print("[yellow]Goodbye![/yellow]")
                     break
                 
                 if not user_input.strip():
@@ -168,7 +179,7 @@ def chat(ctx, prompt, model, system, temperature, stream):
                     console.print(f"[red]Error: {e}[/red]")
                     
             except KeyboardInterrupt:
-                console.print("\n[yellow]Goodbye! 👋[/yellow]")
+                console.print("\n[yellow]Goodbye![/yellow]")
                 break
             except EOFError:
                 break
@@ -193,19 +204,200 @@ def setup(ctx):
         import requests
         response = requests.get("http://localhost:11434/api/tags", timeout=5)
         if response.status_code == 200:
-            console.print("[green]✅ Ollama is running![/green]")
+            console.print("[green]Ollama is running![/green]")
             ollama_models = [m["name"] for m in response.json().get("models", [])]
             if ollama_models:
                 console.print(f"   Found {len(ollama_models)} models")
             else:
-                console.print("[yellow]⚠️  No models found. Install one with: ollama pull llama2[/yellow]")
+                console.print("[yellow]Warning: No models found. Install one with: ollama pull llama2[/yellow]")
         else:
-            console.print("[yellow]⚠️  Ollama not responding[/yellow]")
+            console.print("[yellow]Warning: Ollama not responding[/yellow]")
     except Exception:
-        console.print("[yellow]⚠️  Ollama not found. Install from https://ollama.ai[/yellow]")
+        console.print("[yellow]Warning: Ollama not found. Install from https://ollama.ai[/yellow]")
     
-    console.print("\n[green]✅ Setup complete![/green]")
-    console.print("Run 'localmind chat' to start chatting!")
+    # Check API backends
+    console.print("\n[cyan]Checking API Backends...[/cyan]")
+    api_backends = {
+        "openai": ("OPENAI_API_KEY", "OpenAI (ChatGPT)"),
+        "anthropic": ("ANTHROPIC_API_KEY", "Anthropic (Claude)"),
+        "google": ("GOOGLE_API_KEY", "Google (Gemini)"),
+        "mistral-ai": ("MISTRAL_AI_API_KEY", "Mistral AI"),
+        "cohere": ("COHERE_API_KEY", "Cohere"),
+        "groq": ("GROQ_API_KEY", "Groq")
+    }
+    
+    for backend_name, (env_var, display_name) in api_backends.items():
+        backend_config = config.backends.get(backend_name)
+        if backend_config:
+            api_key = os.getenv(env_var) or backend_config.settings.get("api_key", "")
+            if api_key and backend_config.enabled:
+                console.print(f"[green]✓ {display_name} - Configured and enabled[/green]")
+            elif api_key:
+                console.print(f"[yellow]○ {display_name} - API key set but disabled[/yellow]")
+            elif backend_config.enabled:
+                console.print(f"[yellow]○ {display_name} - Enabled but no API key[/yellow]")
+            else:
+                console.print(f"[dim]○ {display_name} - Not configured[/dim]")
+    
+    console.print("\n[green]Setup complete![/green]")
+    console.print("Run 'python configure_apis.py' to configure API keys")
+    console.print("Or run 'localmind chat' to start chatting!")
+
+
+@cli.command()
+@click.pass_context
+def configure(ctx):
+    """Configure API keys for AI providers"""
+    config_manager = ctx.obj["config_manager"]
+    config = config_manager.get_config()
+    
+    console.print(Panel.fit(
+        "[bold blue]API Configuration[/bold blue]\n"
+        "Configure API keys for AI providers",
+        border_style="blue"
+    ))
+    
+    providers = [
+        {
+            "name": "openai",
+            "display": "OpenAI (ChatGPT)",
+            "env_var": "OPENAI_API_KEY",
+            "setup_url": "https://platform.openai.com/api-keys"
+        },
+        {
+            "name": "anthropic",
+            "display": "Anthropic (Claude)",
+            "env_var": "ANTHROPIC_API_KEY",
+            "setup_url": "https://console.anthropic.com/"
+        },
+        {
+            "name": "google",
+            "display": "Google (Gemini)",
+            "env_var": "GOOGLE_API_KEY",
+            "setup_url": "https://makersuite.google.com/app/apikey"
+        },
+        {
+            "name": "mistral-ai",
+            "display": "Mistral AI",
+            "env_var": "MISTRAL_AI_API_KEY",
+            "setup_url": "https://console.mistral.ai/"
+        },
+        {
+            "name": "cohere",
+            "display": "Cohere",
+            "env_var": "COHERE_API_KEY",
+            "setup_url": "https://dashboard.cohere.com/api-keys"
+        },
+        {
+            "name": "groq",
+            "display": "Groq (Fast Inference)",
+            "env_var": "GROQ_API_KEY",
+            "setup_url": "https://console.groq.com/keys"
+        }
+    ]
+    
+    console.print("\n[cyan]Current Configuration:[/cyan]")
+    table = Table(show_header=True, header_style="bold magenta")
+    table.add_column("Provider", style="cyan")
+    table.add_column("Status", style="green")
+    table.add_column("API Key", style="yellow")
+    
+    for provider in providers:
+        backend_config = config.backends.get(provider["name"])
+        if backend_config:
+            api_key = os.getenv(provider["env_var"]) or backend_config.settings.get("api_key", "")
+            status = "Enabled" if backend_config.enabled else "Disabled"
+            key_status = "Set" if api_key else "Not set"
+            table.add_row(provider["display"], status, key_status)
+        else:
+            table.add_row(provider["display"], "Not configured", "Not set")
+    
+    console.print(table)
+    
+    console.print("\n[cyan]Configure a provider:[/cyan]")
+    for i, provider in enumerate(providers, 1):
+        console.print(f"  {i}. {provider['display']}")
+    console.print("  0. Exit")
+    
+    try:
+        choice = Prompt.ask("\nSelect provider to configure", default="0")
+        idx = int(choice) - 1
+        
+        if idx == -1:
+            return
+        
+        if 0 <= idx < len(providers):
+            provider = providers[idx]
+            backend_config = config.backends.get(provider["name"])
+            
+            if not backend_config:
+                from ..utils.config import BackendConfig
+                # Map provider names to backend types
+                type_map = {
+                    "openai": "openai",
+                    "anthropic": "anthropic",
+                    "google": "google",
+                    "mistral-ai": "mistral-ai",
+                    "cohere": "cohere",
+                    "groq": "groq"
+                }
+                backend_config = BackendConfig(
+                    type=type_map.get(provider["name"], provider["name"]),
+                    enabled=False,
+                    settings={}
+                )
+                config.backends[provider["name"]] = backend_config
+            
+            console.print(f"\n[bold]{provider['display']} Configuration[/bold]")
+            console.print(f"Get API key: {provider['setup_url']}")
+            
+            api_key = Prompt.ask("Enter API key (or press Enter to skip)", default="", show_default=False)
+            if api_key:
+                backend_config.settings["api_key"] = api_key
+                console.print("[green]API key saved![/green]")
+            
+            enable = Confirm.ask("Enable this backend?", default=backend_config.enabled)
+            backend_config.enabled = enable
+            
+            config_manager.config = config
+            config_manager.save_config()
+            
+            console.print("[green]Configuration saved![/green]")
+            console.print("[yellow]Restart the server for changes to take effect.[/yellow]")
+        else:
+            console.print("[red]Invalid selection[/red]")
+    except (ValueError, KeyboardInterrupt):
+        console.print("\n[yellow]Configuration cancelled[/yellow]")
+
+
+@cli.command()
+@click.option("--host", default="0.0.0.0", help="Host to bind to (default: 0.0.0.0)")
+@click.option("--port", default=5000, type=int, help="Port to listen on (default: 5000)")
+@click.option("--debug", is_flag=True, help="Enable debug mode")
+@click.pass_context
+def web(ctx, host, port, debug):
+    """Start web interface server"""
+    try:
+        from ..web.server import WebServer
+        
+        config_manager = ctx.obj["config_manager"]
+        server = WebServer(config_manager, host=host, port=port)
+        
+        console.print(Panel.fit(
+            f"[bold blue]LocalMind Web Server[/bold blue]\n"
+            f"Starting server on [cyan]http://{host}:{port}[/cyan]\n"
+            f"Access the web interface from any device on your network!",
+            border_style="blue"
+        ))
+        
+        server.run(debug=debug)
+    except ImportError as e:
+        console.print(f"[red]Error: Missing dependencies. Run: pip install flask flask-cors[/red]")
+        console.print(f"[dim]{e}[/dim]")
+        sys.exit(1)
+    except Exception as e:
+        console.print(f"[red]Error starting web server: {e}[/red]")
+        sys.exit(1)
 
 
 def main():
