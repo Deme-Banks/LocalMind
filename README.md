@@ -73,4 +73,3 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## Acknowledgments
 
 Built with privacy and local-first principles in mind.
-
