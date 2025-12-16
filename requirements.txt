@@ -1,9 +1,21 @@
 # Core dependencies
-# Add your dependencies here as you develop
+click>=8.1.7
+rich>=13.7.0
+pydantic>=2.5.0
+pyyaml>=6.0.1
+python-dotenv>=1.0.0
 
-# Example dependencies (uncomment as needed):
-# torch>=2.0.0
-# transformers>=4.30.0
-# numpy>=1.24.0
-# requests>=2.31.0
+# Model backends
+ollama>=0.1.0  # For Ollama integration
+transformers>=4.35.0  # For HuggingFace models
+torch>=2.1.0  # PyTorch for transformers
+accelerate>=0.25.0  # For model acceleration
 
+# Utilities
+requests>=2.31.0
+aiohttp>=3.9.0  # For async operations
+tqdm>=4.66.0  # Progress bars
+
+# Optional: For advanced features
+# langchain>=0.1.0  # If we want to add LangChain support later
+# chromadb>=0.4.0  # For vector storage if needed
