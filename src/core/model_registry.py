@@ -141,9 +141,28 @@ class ModelRegistry:
     def _get_transformers_models(self) -> List[Dict[str, Any]]:
         """Get HuggingFace Transformers models list"""
         return [
-            {"name": "gpt2", "size": "500MB", "description": "GPT-2 - OpenAI's original model", "tags": ["general", "small"]},
-            {"name": "microsoft/DialoGPT-medium", "size": "350MB", "description": "DialoGPT - conversational model", "tags": ["chat", "conversational"]},
-            {"name": "distilgpt2", "size": "350MB", "description": "DistilGPT-2 - smaller GPT-2", "tags": ["general", "small", "efficient"]},
+            # Small Models (Good for testing)
+            {"name": "gpt2", "size": "500MB", "description": "GPT-2 - OpenAI's original model", "tags": ["general", "small", "classic"]},
+            {"name": "distilgpt2", "size": "350MB", "description": "DistilGPT-2 - smaller, faster GPT-2", "tags": ["general", "small", "efficient"]},
+            {"name": "microsoft/DialoGPT-small", "size": "117MB", "description": "DialoGPT Small - conversational", "tags": ["chat", "conversational", "small"]},
+            {"name": "microsoft/DialoGPT-medium", "size": "350MB", "description": "DialoGPT Medium - conversational model", "tags": ["chat", "conversational"]},
+            
+            # Medium Models
+            {"name": "EleutherAI/gpt-neo-125M", "size": "500MB", "description": "GPT-Neo 125M - open source GPT alternative", "tags": ["general", "small", "open-source"]},
+            {"name": "EleutherAI/gpt-neo-1.3B", "size": "5GB", "description": "GPT-Neo 1.3B - larger open source model", "tags": ["general", "medium", "open-source"]},
+            {"name": "EleutherAI/gpt-neo-2.7B", "size": "11GB", "description": "GPT-Neo 2.7B - capable open source model", "tags": ["general", "medium", "open-source"]},
+            
+            # Code Models
+            {"name": "microsoft/CodeGPT-small-py", "size": "350MB", "description": "CodeGPT Small - Python code generation", "tags": ["code", "python", "small"]},
+            {"name": "Salesforce/codegen-350M-mono", "size": "700MB", "description": "CodeGen 350M - code generation model", "tags": ["code", "programming"]},
+            
+            # Instruction-Tuned Models
+            {"name": "google/flan-t5-small", "size": "240MB", "description": "FLAN-T5 Small - instruction following", "tags": ["instruct", "small", "efficient"]},
+            {"name": "google/flan-t5-base", "size": "990MB", "description": "FLAN-T5 Base - instruction following", "tags": ["instruct", "medium"]},
+            {"name": "google/flan-t5-large", "size": "3GB", "description": "FLAN-T5 Large - instruction following", "tags": ["instruct", "large"]},
+            
+            # Note: Larger models (7B+) are available but require significant RAM/VRAM
+            # Users can specify any HuggingFace model ID, these are just curated suggestions
         ]
     
     def _get_openai_models(self) -> List[Dict[str, Any]]:

@@ -9,13 +9,16 @@ import subprocess
 import threading
 import time
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 from flask import Flask, render_template, request, jsonify, Response, stream_with_context
 from flask_cors import CORS
 import logging
 
 from ..core.model_loader import ModelLoader
 from ..core.model_registry import ModelRegistry
+from ..core.conversation_manager import ConversationManager
+from ..core.context_manager import ContextManager
+from ..core.module_loader import ModuleLoader
 from ..utils.config import ConfigManager
 from ..utils.logger import setup_logger
 
@@ -37,6 +40,9 @@ class WebServer:
         self.config_manager = config_manager
         self.model_loader = ModelLoader(config_manager)
         self.model_registry = ModelRegistry()
+        self.conversation_manager = ConversationManager()
+        self.context_manager = ContextManager()
+        self.module_loader = ModuleLoader()
         self.host = host
         self.port = port
         
@@ -53,6 +59,10 @@ class WebServer:
         
         # Track download progress
         self.download_progress: Dict[str, Dict[str, Any]] = {}
+        
+        # Track current conversation per session (simple in-memory store)
+        # In production, use Flask sessions
+        self.current_conversations: Dict[str, str] = {}
     
     def _get_api_setup_url(self, backend_name: str) -> str:
         """Get API setup URL for a backend"""
@@ -212,13 +222,30 @@ class WebServer:
                         "models": backend.list_models()
                     }
                 
+                # Get modules status
+                modules_status = self.module_loader.list_modules()
+                
                 return jsonify({
                     "status": "ok",
                     "backends": backends_status,
+                    "modules": modules_status,
                     "default_model": self.config_manager.get_config().default_model
                 })
             except Exception as e:
                 logger.error(f"Error getting status: {e}")
+                return jsonify({"status": "error", "message": str(e)}), 500
+        
+        @self.app.route("/api/modules", methods=["GET"])
+        def api_list_modules():
+            """List all available modules"""
+            try:
+                modules = self.module_loader.list_modules()
+                return jsonify({
+                    "status": "ok",
+                    "modules": modules
+                })
+            except Exception as e:
+                logger.error(f"Error listing modules: {e}")
                 return jsonify({"status": "error", "message": str(e)}), 500
         
         @self.app.route("/api/models", methods=["GET"])
@@ -533,6 +560,155 @@ class WebServer:
                 "progress": progress
             })
         
+        @self.app.route("/api/conversations", methods=["GET"])
+        def api_list_conversations():
+            """List all conversations"""
+            try:
+                search = request.args.get("search", None)
+                limit = request.args.get("limit", type=int)
+                conversations = self.conversation_manager.list_conversations(limit=limit, search=search)
+                return jsonify({
+                    "status": "ok",
+                    "conversations": conversations
+                })
+            except Exception as e:
+                logger.error(f"Error listing conversations: {e}")
+                return jsonify({"status": "error", "message": str(e)}), 500
+        
+        @self.app.route("/api/conversations", methods=["POST"])
+        def api_create_conversation():
+            """Create a new conversation"""
+            try:
+                data = request.get_json() or {}
+                title = data.get("title")
+                model = data.get("model")
+                conv_id = self.conversation_manager.create_conversation(title=title, model=model)
+                return jsonify({
+                    "status": "ok",
+                    "conversation_id": conv_id
+                })
+            except Exception as e:
+                logger.error(f"Error creating conversation: {e}")
+                return jsonify({"status": "error", "message": str(e)}), 500
+        
+        @self.app.route("/api/conversations/<conv_id>", methods=["GET"])
+        def api_get_conversation(conv_id):
+            """Get a conversation by ID"""
+            try:
+                conversation = self.conversation_manager.get_conversation(conv_id)
+                if not conversation:
+                    return jsonify({"status": "error", "message": "Conversation not found"}), 404
+                return jsonify({
+                    "status": "ok",
+                    "conversation": conversation
+                })
+            except Exception as e:
+                logger.error(f"Error getting conversation: {e}")
+                return jsonify({"status": "error", "message": str(e)}), 500
+        
+        @self.app.route("/api/conversations/<conv_id>", methods=["PUT"])
+        def api_update_conversation(conv_id):
+            """Update conversation metadata"""
+            try:
+                data = request.get_json() or {}
+                title = data.get("title")
+                model = data.get("model")
+                success = self.conversation_manager.update_conversation(conv_id, title=title, model=model)
+                if not success:
+                    return jsonify({"status": "error", "message": "Conversation not found"}), 404
+                return jsonify({"status": "ok"})
+            except Exception as e:
+                logger.error(f"Error updating conversation: {e}")
+                return jsonify({"status": "error", "message": str(e)}), 500
+        
+        @self.app.route("/api/conversations/<conv_id>", methods=["DELETE"])
+        def api_delete_conversation(conv_id):
+            """Delete a conversation"""
+            try:
+                success = self.conversation_manager.delete_conversation(conv_id)
+                if not success:
+                    return jsonify({"status": "error", "message": "Conversation not found"}), 404
+                return jsonify({"status": "ok"})
+            except Exception as e:
+                logger.error(f"Error deleting conversation: {e}")
+                return jsonify({"status": "error", "message": str(e)}), 500
+        
+        @self.app.route("/api/conversations/<conv_id>/export", methods=["GET"])
+        def api_export_conversation(conv_id):
+            """Export a conversation"""
+            try:
+                format_type = request.args.get("format", "json")
+                exported = self.conversation_manager.export_conversation(conv_id, format=format_type)
+                if not exported:
+                    return jsonify({"status": "error", "message": "Conversation not found"}), 404
+                return Response(
+                    exported,
+                    mimetype="application/json" if format_type == "json" else "text/plain",
+                    headers={
+                        "Content-Disposition": f"attachment; filename=conversation_{conv_id}.{format_type}"
+                    }
+                )
+            except Exception as e:
+                logger.error(f"Error exporting conversation: {e}")
+                return jsonify({"status": "error", "message": str(e)}), 500
+        
+        @self.app.route("/api/conversations/import", methods=["POST"])
+        def api_import_conversation():
+            """Import a conversation"""
+            try:
+                data = request.get_json()
+                if not data:
+                    return jsonify({"status": "error", "message": "No data provided"}), 400
+                conv_id = self.conversation_manager.import_conversation(data)
+                if not conv_id:
+                    return jsonify({"status": "error", "message": "Import failed"}), 500
+                return jsonify({
+                    "status": "ok",
+                    "conversation_id": conv_id
+                })
+            except Exception as e:
+                logger.error(f"Error importing conversation: {e}")
+                return jsonify({"status": "error", "message": str(e)}), 500
+        
+        def _get_backend_for_model(model: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
+            """
+            Determine backend name and type for a model
+            
+            Returns:
+                Tuple of (backend_name, backend_type) or (None, None) if not found
+            """
+            if not model:
+                return None, None
+            
+            # Check each backend for the model
+            for backend_name, backend in self.model_loader.backends.items():
+                try:
+                    if model in backend.list_models():
+                        backend_type = backend.get_backend_info().get("type", backend_name)
+                        return backend_name, backend_type
+                except:
+                    continue
+            
+            # Try to infer from model name patterns
+            model_lower = model.lower()
+            if any(prefix in model_lower for prefix in ["gpt", "openai"]):
+                return "openai", "openai"
+            elif any(prefix in model_lower for prefix in ["claude", "anthropic"]):
+                return "anthropic", "anthropic"
+            elif any(prefix in model_lower for prefix in ["gemini", "google"]):
+                return "google", "google"
+            elif any(prefix in model_lower for prefix in ["mistral"]):
+                return "mistral-ai", "mistral-ai"
+            elif any(prefix in model_lower for prefix in ["command", "cohere"]):
+                return "cohere", "cohere"
+            elif any(prefix in model_lower for prefix in ["groq", "llama-3", "mixtral"]):
+                # Check if it's groq format
+                if "-" in model and any(x in model for x in ["70b", "8b"]):
+                    return "groq", "groq"
+            
+            # Default to ollama for local models
+            return "ollama", "ollama"
+        
         @self.app.route("/api/chat", methods=["POST"])
         def api_chat():
             """Chat with a model"""
@@ -543,9 +719,127 @@ class WebServer:
                 system_prompt = data.get("system_prompt")
                 temperature = data.get("temperature", 0.7)
                 stream = data.get("stream", False)
+                conv_id = data.get("conversation_id")
                 
                 if not prompt:
                     return jsonify({"status": "error", "message": "Prompt required"}), 400
+                
+                # Create conversation if not provided
+                if not conv_id:
+                    conv_id = self.conversation_manager.create_conversation(model=model)
+                
+                # Load conversation history for context
+                conversation = self.conversation_manager.get_conversation(conv_id)
+                conversation_messages = []
+                if conversation:
+                    conversation_messages = conversation.get("messages", [])
+                
+                # Convert to Message objects
+                from ..core.context_manager import Message
+                history_messages = self.context_manager.get_conversation_history(conversation_messages)
+                
+                # Add current user message
+                current_user_message = Message(role="user", content=prompt)
+                history_messages.append(current_user_message)
+                
+                # Try to find a module to handle this prompt (before building context)
+                module_response = None
+                preferred_module = data.get("module")  # Allow specifying module
+                
+                try:
+                    module_response = self.module_loader.process_prompt(
+                        prompt,
+                        model_loader=self.model_loader,
+                        context={
+                            "model": model,
+                            "messages": conversation_messages,
+                            "conversation_id": conv_id
+                        },
+                        preferred_module=preferred_module,
+                        model=model,
+                        temperature=temperature
+                    )
+                except Exception as e:
+                    logger.warning(f"Module processing failed: {e}")
+                    module_response = None
+                
+                # If module handled it successfully, use module response
+                if module_response and module_response.success and module_response.content:
+                    # Save assistant message from module
+                    self.conversation_manager.save_message(
+                        conv_id,
+                        "assistant",
+                        module_response.content,
+                        metadata={
+                            "model": model,
+                            "temperature": temperature,
+                            "module": module_response.metadata.get("module")
+                        }
+                    )
+                    
+                    if stream:
+                        # For streaming, we'll need to stream the module response
+                        # For now, return as non-streaming
+                        return jsonify({
+                            "status": "ok",
+                            "response": module_response.content,
+                            "model": model,
+                            "metadata": {
+                                **module_response.metadata,
+                                "module_used": True
+                            },
+                            "conversation_id": conv_id
+                        })
+                    else:
+                        return jsonify({
+                            "status": "ok",
+                            "response": module_response.content,
+                            "model": model,
+                            "metadata": {
+                                **module_response.metadata,
+                                "module_used": True
+                            },
+                            "conversation_id": conv_id
+                        })
+                
+                # Otherwise, use standard AI generation
+                # Build context with compression/summarization
+                processed_messages, context_metadata = self.context_manager.build_context(
+                    history_messages,
+                    model=model,
+                    system_prompt=system_prompt
+                )
+                
+                # Determine backend type
+                backend_name, backend_type = _get_backend_for_model(model)
+                if not backend_type:
+                    backend_type = "ollama"  # Default
+                
+                # Format messages for backend
+                if backend_type in ["openai", "anthropic", "google", "mistral-ai", "cohere", "groq"]:
+                    # API backends use message format
+                    formatted_messages = self.context_manager.format_messages_for_backend(
+                        processed_messages, backend_type
+                    )
+                    # For API backends, we'll need to update the backend calls
+                    # For now, build a prompt string
+                    prompt_text = "\n".join([f"{m['role']}: {m['content']}" for m in formatted_messages if m.get('role') != 'system'])
+                    if system_prompt:
+                        # System prompt handled separately for API backends
+                        pass
+                else:
+                    # Ollama uses prompt string
+                    prompt_text = self.context_manager.format_messages_for_backend(
+                        processed_messages, "ollama"
+                    )
+                
+                # Save user message
+                self.conversation_manager.save_message(
+                    conv_id,
+                    "user",
+                    prompt,
+                    metadata={"model": model, "temperature": temperature, "system_prompt": system_prompt}
+                )
                 
                 if stream:
                     # Streaming response using Ollama's streaming API directly
@@ -562,16 +856,27 @@ class WebServer:
                         url = f"{ollama_backend.base_url}/api/generate"
                         payload = {
                             "model": model or self.config_manager.get_config().default_model,
-                            "prompt": prompt,
+                            "prompt": prompt_text,  # Use context-aware prompt
                             "stream": True,
                             "options": {
                                 "temperature": temperature,
                             }
                         }
                         
-                        if system_prompt:
-                            payload["system"] = system_prompt
+                        # Extract system prompt from processed messages if present
+                        final_system_prompt = system_prompt
+                        for msg in processed_messages:
+                            if msg.role == "system" and "[Previous conversation summary:" in msg.content:
+                                # Combine system prompts
+                                if final_system_prompt:
+                                    final_system_prompt = f"{final_system_prompt}\n\n{msg.content}"
+                                else:
+                                    final_system_prompt = msg.content
                         
+                        if final_system_prompt:
+                            payload["system"] = final_system_prompt
+                        
+                        full_response = ""
                         try:
                             with requests.post(url, json=payload, stream=True, timeout=ollama_backend.timeout) as r:
                                 r.raise_for_status()
@@ -580,9 +885,18 @@ class WebServer:
                                         try:
                                             data = json.loads(line)
                                             if "response" in data:
-                                                yield f"data: {json.dumps({'chunk': data['response']})}\n\n"
+                                                chunk = data['response']
+                                                full_response += chunk
+                                                yield f"data: {json.dumps({'chunk': chunk})}\n\n"
                                             if data.get("done", False):
-                                                yield f"data: {json.dumps({'done': True})}\n\n"
+                                                # Save assistant message
+                                                self.conversation_manager.save_message(
+                                                    conv_id,
+                                                    "assistant",
+                                                    full_response,
+                                                    metadata={"model": model, "temperature": temperature}
+                                                )
+                                                yield f"data: {json.dumps({'done': True, 'conversation_id': conv_id})}\n\n"
                                                 break
                                         except json.JSONDecodeError:
                                             continue
@@ -599,18 +913,41 @@ class WebServer:
                     )
                 else:
                     # Non-streaming response
+                    # Extract system prompt from processed messages if present
+                    final_system_prompt = system_prompt
+                    for msg in processed_messages:
+                        if msg.role == "system" and "[Previous conversation summary:" in msg.content:
+                            # Combine system prompts
+                            if final_system_prompt:
+                                final_system_prompt = f"{final_system_prompt}\n\n{msg.content}"
+                            else:
+                                final_system_prompt = msg.content
+                    
                     response = self.model_loader.generate(
-                        prompt=prompt,
+                        prompt=prompt_text,  # Use context-aware prompt
                         model=model,
-                        system_prompt=system_prompt,
+                        system_prompt=final_system_prompt,
                         temperature=temperature
                     )
+                    
+                    # Save assistant message
+                    self.conversation_manager.save_message(
+                        conv_id,
+                        "assistant",
+                        response.text,
+                        metadata={"model": response.model, "temperature": temperature}
+                    )
+                    
+                    # Add context metadata to response
+                    response_metadata = response.metadata.copy()
+                    response_metadata.update(context_metadata)
                     
                     return jsonify({
                         "status": "ok",
                         "response": response.text,
                         "model": response.model,
-                        "metadata": response.metadata
+                        "metadata": response_metadata,
+                        "conversation_id": conv_id
                     })
             except Exception as e:
                 logger.error(f"Error in chat: {e}")

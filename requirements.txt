@@ -21,5 +21,6 @@ flask>=3.0.0
 flask-cors>=4.0.0
 
 # Optional: For advanced features
+llama-cpp-python>=0.3.0  # For GGUF model support (optional backend)
 # langchain>=0.1.0  # If we want to add LangChain support later
 # chromadb>=0.4.0  # For vector storage if needed

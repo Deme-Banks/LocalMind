@@ -29,6 +29,23 @@
 
         <!-- Main Content -->
         <div class="main-content">
+            <!-- Conversations Sidebar -->
+            <aside class="conversations-sidebar" id="conversationsSidebar">
+                <div class="conversations-header">
+                    <h3>Conversations</h3>
+                    <button class="btn btn-primary btn-small" id="newConversationBtn" title="New Conversation">
+                        <span>+</span>
+                    </button>
+                </div>
+                <div class="conversations-search">
+                    <input type="text" id="conversationsSearch" class="search-input" 
+                           placeholder="Search conversations...">
+                </div>
+                <div class="conversations-list" id="conversationsList">
+                    <p style="color: var(--text-secondary); padding: 1rem; text-align: center;">Loading...</p>
+                </div>
+            </aside>
+            
             <!-- Sidebar -->
             <aside class="sidebar">
                 <div class="sidebar-section">

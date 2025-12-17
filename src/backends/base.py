@@ -4,7 +4,7 @@ All backends must implement this interface
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, AsyncIterator
+from typing import Dict, Any, Optional, AsyncIterator, List
 from pydantic import BaseModel, Field
 
 
@@ -149,6 +149,52 @@ class BaseBackend(ABC):
             "name": self.name,
             "type": self.__class__.__name__.replace("Backend", "").lower(),
             "supports_download": hasattr(self, "download_model") and 
-                                 self.download_model.__func__ != BaseBackend.download_model
+                                 self.download_model.__func__ != BaseBackend.download_model,
+            "supports_tool_calling": self.supports_tool_calling()
         }
+    
+    def supports_tool_calling(self) -> bool:
+        """
+        Check if backend supports tool/function calling
+        
+        Returns:
+            True if backend supports tool calling
+        """
+        return False
+    
+    def generate_with_tools(
+        self,
+        prompt: str,
+        model: str,
+        tools: List[Dict[str, Any]],
+        system_prompt: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+        **kwargs
+    ) -> ModelResponse:
+        """
+        Generate text with tool calling support (optional)
+        
+        Args:
+            prompt: Input prompt
+            model: Model identifier
+            tools: List of available tools (OpenAI function format)
+            system_prompt: Optional system prompt
+            temperature: Sampling temperature
+            max_tokens: Maximum tokens to generate
+            **kwargs: Additional parameters
+        
+        Returns:
+            ModelResponse with generated text and tool calls
+        """
+        # Default implementation falls back to regular generate
+        # Backends that support tool calling should override this
+        return self.generate(
+            prompt=prompt,
+            model=model,
+            system_prompt=system_prompt,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            **kwargs
+        )
 

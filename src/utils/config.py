@@ -229,6 +229,26 @@ class ConfigManager:
                         "api_key": os.getenv("GROQ_API_KEY", ""),
                         "base_url": os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
                     }
+                ),
+                "transformers": BackendConfig(
+                    type="transformers",
+                    enabled=False,  # Disabled by default, requires transformers library
+                    settings={
+                        "cache_dir": os.getenv("TRANSFORMERS_CACHE_DIR", os.path.expanduser("~/.cache/huggingface")),
+                        "device": os.getenv("TRANSFORMERS_DEVICE", "auto"),  # auto, cpu, cuda, mps
+                        "load_in_8bit": os.getenv("TRANSFORMERS_8BIT", "false").lower() == "true",
+                        "load_in_4bit": os.getenv("TRANSFORMERS_4BIT", "false").lower() == "true"
+                    }
+                ),
+                "gguf": BackendConfig(
+                    type="gguf",
+                    enabled=False,  # Disabled by default, requires llama-cpp-python
+                    settings={
+                        "models_dir": os.getenv("GGUF_MODELS_DIR", os.path.join(os.getcwd(), "models", "gguf")),
+                        "n_threads": None,  # None = auto
+                        "n_ctx": 2048,  # Context window size
+                        "n_gpu_layers": 0,  # 0 = CPU only, set > 0 for GPU
+                    }
                 )
             },
             models={

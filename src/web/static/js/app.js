@@ -4,6 +4,8 @@
 let currentModel = null;
 let conversationHistory = [];
 let downloadCheckInterval = null;
+let currentConversationId = null;
+let conversations = [];
 
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', () => {
@@ -41,6 +43,7 @@ function toggleTheme() {
 async function initializeApp() {
     await checkStatus();
     await loadModels();
+    await loadConversations();
     setupEventListeners();
 }
 
@@ -126,6 +129,8 @@ function setupEventListeners() {
     const chatInput = document.getElementById('chatInput');
     const sendButton = document.getElementById('sendButton');
     const modelSelect = document.getElementById('modelSelect');
+    const newConversationBtn = document.getElementById('newConversationBtn');
+    const conversationsSearch = document.getElementById('conversationsSearch');
     
     // Model selection
     modelSelect.addEventListener('change', (e) => {
@@ -149,6 +154,18 @@ function setupEventListeners() {
         chatInput.style.height = 'auto';
         chatInput.style.height = chatInput.scrollHeight + 'px';
     });
+    
+    // New conversation button
+    if (newConversationBtn) {
+        newConversationBtn.addEventListener('click', createNewConversation);
+    }
+    
+    // Conversations search
+    if (conversationsSearch) {
+        conversationsSearch.addEventListener('input', (e) => {
+            filterConversations(e.target.value);
+        });
+    }
 }
 
 // Send message
@@ -209,7 +226,8 @@ async function sendMessageNormal(prompt, temperature, systemPrompt) {
             model: currentModel,
             temperature,
             system_prompt: systemPrompt,
-            stream: false
+            stream: false,
+            conversation_id: currentConversationId
         })
     });
     
@@ -217,6 +235,11 @@ async function sendMessageNormal(prompt, temperature, systemPrompt) {
     
     if (data.status === 'ok') {
         addMessage('assistant', data.response);
+        // Update conversation ID if returned
+        if (data.conversation_id) {
+            currentConversationId = data.conversation_id;
+            await loadConversations(); // Refresh list
+        }
     } else {
         throw new Error(data.message || 'Unknown error');
     }
@@ -234,7 +257,8 @@ async function sendMessageStream(prompt, temperature, systemPrompt) {
             model: currentModel,
             temperature,
             system_prompt: systemPrompt,
-            stream: true
+            stream: true,
+            conversation_id: currentConversationId
         })
     });
     
@@ -269,6 +293,11 @@ async function sendMessageStream(prompt, temperature, systemPrompt) {
                     }
                     
                     if (data.done) {
+                        // Update conversation ID if returned
+                        if (data.conversation_id) {
+                            currentConversationId = data.conversation_id;
+                            loadConversations(); // Refresh list
+                        }
                         return;
                     }
                 } catch (e) {
@@ -701,4 +730,210 @@ document.addEventListener('click', (e) => {
         }
     }
 });
+
+// Conversation Management
+async function loadConversations() {
+    try {
+        const response = await fetch('/api/conversations');
+        const data = await response.json();
+        
+        if (data.status === 'ok') {
+            conversations = data.conversations;
+            renderConversations();
+        }
+    } catch (error) {
+        console.error('Failed to load conversations:', error);
+    }
+}
+
+function renderConversations() {
+    const listDiv = document.getElementById('conversationsList');
+    if (!listDiv) return;
+    
+    if (conversations.length === 0) {
+        listDiv.innerHTML = '<p style="color: var(--text-secondary); padding: 1rem; text-align: center;">No conversations yet</p>';
+        return;
+    }
+    
+    listDiv.innerHTML = '';
+    
+    conversations.forEach(conv => {
+        const item = document.createElement('div');
+        item.className = 'conversation-item';
+        if (conv.id === currentConversationId) {
+            item.classList.add('active');
+        }
+        
+        const titleDiv = document.createElement('div');
+        titleDiv.style.flex = '1';
+        titleDiv.style.minWidth = '0';
+        
+        const title = document.createElement('div');
+        title.className = 'conversation-item-title';
+        title.textContent = conv.title || 'Untitled Conversation';
+        titleDiv.appendChild(title);
+        
+        const meta = document.createElement('div');
+        meta.className = 'conversation-item-meta';
+        const date = new Date(conv.updated_at);
+        meta.textContent = date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+        titleDiv.appendChild(meta);
+        
+        const actions = document.createElement('div');
+        actions.className = 'conversation-item-actions';
+        
+        const exportBtn = document.createElement('button');
+        exportBtn.textContent = '📥';
+        exportBtn.title = 'Export';
+        exportBtn.onclick = (e) => {
+            e.stopPropagation();
+            exportConversation(conv.id);
+        };
+        
+        const deleteBtn = document.createElement('button');
+        deleteBtn.textContent = '🗑️';
+        deleteBtn.title = 'Delete';
+        deleteBtn.onclick = (e) => {
+            e.stopPropagation();
+            deleteConversation(conv.id);
+        };
+        
+        actions.appendChild(exportBtn);
+        actions.appendChild(deleteBtn);
+        
+        item.appendChild(titleDiv);
+        item.appendChild(actions);
+        
+        item.onclick = () => loadConversation(conv.id);
+        
+        listDiv.appendChild(item);
+    });
+}
+
+function filterConversations(searchTerm) {
+    const listDiv = document.getElementById('conversationsList');
+    if (!listDiv) return;
+    
+    const items = listDiv.querySelectorAll('.conversation-item');
+    const term = searchTerm.toLowerCase().trim();
+    
+    items.forEach(item => {
+        const title = item.querySelector('.conversation-item-title')?.textContent.toLowerCase() || '';
+        if (term === '' || title.includes(term)) {
+            item.style.display = '';
+        } else {
+            item.style.display = 'none';
+        }
+    });
+}
+
+async function createNewConversation() {
+    try {
+        const response = await fetch('/api/conversations', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                title: null,
+                model: currentModel
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.status === 'ok') {
+            currentConversationId = data.conversation_id;
+            // Clear chat
+            const chatMessages = document.getElementById('chatMessages');
+            chatMessages.innerHTML = '<div class="welcome-message"><h2>Welcome to LocalMind</h2><p>Select a model and start chatting! Your conversations stay local and private.</p></div>';
+            await loadConversations();
+        }
+    } catch (error) {
+        console.error('Failed to create conversation:', error);
+        showNotification('Failed to create conversation', 'error');
+    }
+}
+
+async function loadConversation(convId) {
+    try {
+        const response = await fetch(`/api/conversations/${convId}`);
+        const data = await response.json();
+        
+        if (data.status === 'ok') {
+            const conversation = data.conversation;
+            currentConversationId = convId;
+            
+            // Clear chat
+            const chatMessages = document.getElementById('chatMessages');
+            chatMessages.innerHTML = '';
+            
+            // Load messages
+            conversation.messages.forEach(msg => {
+                addMessage(msg.role, msg.content);
+            });
+            
+            // Update model if specified
+            if (conversation.model) {
+                currentModel = conversation.model;
+                const modelSelect = document.getElementById('modelSelect');
+                if (modelSelect) {
+                    modelSelect.value = currentModel;
+                    updateModelInfo();
+                }
+            }
+            
+            await loadConversations(); // Refresh list to highlight active
+        }
+    } catch (error) {
+        console.error('Failed to load conversation:', error);
+        showNotification('Failed to load conversation', 'error');
+    }
+}
+
+async function deleteConversation(convId) {
+    if (!confirm('Are you sure you want to delete this conversation?')) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/api/conversations/${convId}`, {
+            method: 'DELETE'
+        });
+        
+        const data = await response.json();
+        
+        if (data.status === 'ok') {
+            if (currentConversationId === convId) {
+                currentConversationId = null;
+                const chatMessages = document.getElementById('chatMessages');
+                chatMessages.innerHTML = '<div class="welcome-message"><h2>Welcome to LocalMind</h2><p>Select a model and start chatting! Your conversations stay local and private.</p></div>';
+            }
+            await loadConversations();
+            showNotification('Conversation deleted', 'success');
+        }
+    } catch (error) {
+        console.error('Failed to delete conversation:', error);
+        showNotification('Failed to delete conversation', 'error');
+    }
+}
+
+async function exportConversation(convId) {
+    try {
+        const response = await fetch(`/api/conversations/${convId}/export?format=markdown`);
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `conversation_${convId}.md`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+        showNotification('Conversation exported', 'success');
+    } catch (error) {
+        console.error('Failed to export conversation:', error);
+        showNotification('Failed to export conversation', 'error');
+    }
+}
 

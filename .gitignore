@@ -60,3 +60,42 @@ Thumbs.db
 temp/
 tmp/
 
+# Conversation history (user data)
+conversations/
+conversations/**/*
+
+# API Keys and Configuration Files
+# Config files that may contain API keys
+config.yaml
+config.yml
+*.config.yaml
+*.config.yml
+**/config.local.yaml
+**/config.local.yml
+**/config.production.yaml
+**/config.production.yml
+**/config.secret.yaml
+**/config.secret.yml
+
+# LocalMind user config (contains API keys)
+.localmind/
+**/.localmind/
+
+# API key files
+*.key
+*.api_key
+*.secret
+*_api_key.txt
+*_secret.txt
+secrets.yaml
+secrets.yml
+.secrets.yaml
+.secrets.yml
+
+# Environment files (already covered, but being explicit)
+.env.*
+!.env.example
+.env.local
+.env.production
+.env.development
+

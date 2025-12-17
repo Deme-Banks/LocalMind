@@ -9,6 +9,7 @@ from typing import Dict, Any, Optional, AsyncIterator
 import json
 
 from .base import BaseBackend, ModelResponse
+from ..core.connection_pool import ConnectionPoolManager
 
 
 class GoogleBackend(BaseBackend):
@@ -19,6 +20,12 @@ class GoogleBackend(BaseBackend):
         self.api_key = config.get("api_key") or os.getenv("GOOGLE_API_KEY")
         self.base_url = config.get("base_url", "https://generativelanguage.googleapis.com/v1")
         self.timeout = config.get("timeout", 120)
+        # Get session with connection pooling
+        self.session = ConnectionPoolManager.get_session(
+            "google",
+            self.base_url,
+            config.get("pool_config")
+        )
     
     def is_available(self) -> bool:
         """Check if Google API is available"""
@@ -26,7 +33,8 @@ class GoogleBackend(BaseBackend):
             return False
         try:
             # Simple check - try to list models
-            response = requests.get(
+            session = getattr(self, 'session', None) or requests.Session()
+            response = session.get(
                 f"{self.base_url}/models?key={self.api_key}",
                 timeout=5
             )
@@ -40,7 +48,8 @@ class GoogleBackend(BaseBackend):
             return []
         
         try:
-            response = requests.get(
+            session = getattr(self, 'session', None) or requests.Session()
+            response = session.get(
                 f"{self.base_url}/models?key={self.api_key}",
                 timeout=10
             )
@@ -92,7 +101,8 @@ class GoogleBackend(BaseBackend):
         payload.update(kwargs)
         
         try:
-            response = requests.post(
+            session = getattr(self, 'session', None) or requests.Session()
+            response = session.post(
                 url,
                 json=payload,
                 timeout=self.timeout

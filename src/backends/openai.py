@@ -5,10 +5,11 @@ Supports OpenAI API models (GPT-3.5, GPT-4, etc.)
 
 import os
 import requests
-from typing import Dict, Any, Optional, AsyncIterator
+from typing import Dict, Any, Optional, AsyncIterator, List
 import json
 
 from .base import BaseBackend, ModelResponse
+from ..core.connection_pool import ConnectionPoolManager
 
 
 class OpenAIBackend(BaseBackend):
@@ -20,6 +21,12 @@ class OpenAIBackend(BaseBackend):
         self.base_url = config.get("base_url", "https://api.openai.com/v1")
         self.timeout = config.get("timeout", 120)
         self.organization = config.get("organization")
+        # Get session with connection pooling
+        self.session = ConnectionPoolManager.get_session(
+            "openai",
+            self.base_url,
+            config.get("pool_config")
+        )
     
     def is_available(self) -> bool:
         """Check if OpenAI API is available"""
@@ -31,7 +38,9 @@ class OpenAIBackend(BaseBackend):
             if self.organization:
                 headers["OpenAI-Organization"] = self.organization
             
-            response = requests.get(
+            # Use pooled session if available, otherwise create temporary
+            session = getattr(self, 'session', None) or requests.Session()
+            response = session.get(
                 f"{self.base_url}/models",
                 headers=headers,
                 timeout=5
@@ -50,7 +59,9 @@ class OpenAIBackend(BaseBackend):
             if self.organization:
                 headers["OpenAI-Organization"] = self.organization
             
-            response = requests.get(
+            # Use pooled session if available
+            session = getattr(self, 'session', None) or requests.Session()
+            response = session.get(
                 f"{self.base_url}/models",
                 headers=headers,
                 timeout=10
@@ -108,7 +119,8 @@ class OpenAIBackend(BaseBackend):
         payload.update(kwargs)
         
         try:
-            response = requests.post(
+            # Use pooled session for connection reuse
+            response = self.session.post(
                 url,
                 json=payload,
                 headers=headers,
@@ -188,6 +200,79 @@ class OpenAIBackend(BaseBackend):
                                         yield delta["content"]
                         except (json.JSONDecodeError, UnicodeDecodeError):
                             continue
+    
+    def supports_tool_calling(self) -> bool:
+        """OpenAI API supports function calling"""
+        return True
+    
+    def generate_with_tools(
+        self,
+        prompt: str,
+        model: str,
+        tools: List[Dict[str, Any]],
+        system_prompt: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+        **kwargs
+    ) -> ModelResponse:
+        """Generate text with tool calling support"""
+        if not self.api_key:
+            raise RuntimeError("OpenAI API key not configured")
+        
+        url = f"{self.base_url}/chat/completions"
+        
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+        if self.organization:
+            headers["OpenAI-Organization"] = self.organization
+        
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+        
+        payload = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "tools": tools,  # Add tools
+            "tool_choice": "auto"  # Let model decide when to use tools
+        }
+        
+        if max_tokens:
+            payload["max_tokens"] = max_tokens
+        
+        payload.update(kwargs)
+        
+        try:
+            # Use pooled session for connection reuse
+            response = self.session.post(
+                url,
+                json=payload,
+                headers=headers,
+                timeout=self.timeout
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            message = data["choices"][0]["message"]
+            content = message.get("content", "")
+            tool_calls = message.get("tool_calls", [])
+            
+            return ModelResponse(
+                text=content,
+                model=model,
+                done=True,
+                metadata={
+                    "usage": data.get("usage", {}),
+                    "finish_reason": data["choices"][0].get("finish_reason"),
+                    "tool_calls": tool_calls  # Include tool calls in metadata
+                }
+            )
+        except Exception as e:
+            raise RuntimeError(f"OpenAI generation with tools failed: {e}")
     
     def load_model(self, model: str) -> bool:
         """Load model (OpenAI API models are always available if API key is set)"""

@@ -9,6 +9,7 @@ from typing import Dict, Any, Optional, AsyncIterator
 import json
 
 from .base import BaseBackend, ModelResponse
+from ..core.connection_pool import ConnectionPoolManager
 
 
 class MistralAIBackend(BaseBackend):
@@ -19,6 +20,12 @@ class MistralAIBackend(BaseBackend):
         self.api_key = config.get("api_key") or os.getenv("MISTRAL_AI_API_KEY")
         self.base_url = config.get("base_url", "https://api.mistral.ai/v1")
         self.timeout = config.get("timeout", 120)
+        # Get session with connection pooling
+        self.session = ConnectionPoolManager.get_session(
+            "mistral-ai",
+            self.base_url,
+            config.get("pool_config")
+        )
     
     def is_available(self) -> bool:
         """Check if Mistral AI API is available"""
@@ -26,7 +33,8 @@ class MistralAIBackend(BaseBackend):
             return False
         try:
             headers = {"Authorization": f"Bearer {self.api_key}"}
-            response = requests.get(
+            session = getattr(self, 'session', None) or requests.Session()
+            response = session.get(
                 f"{self.base_url}/models",
                 headers=headers,
                 timeout=5
@@ -42,7 +50,8 @@ class MistralAIBackend(BaseBackend):
         
         try:
             headers = {"Authorization": f"Bearer {self.api_key}"}
-            response = requests.get(
+            session = getattr(self, 'session', None) or requests.Session()
+            response = session.get(
                 f"{self.base_url}/models",
                 headers=headers,
                 timeout=10
@@ -99,7 +108,8 @@ class MistralAIBackend(BaseBackend):
         payload.update(kwargs)
         
         try:
-            response = requests.post(
+            session = getattr(self, 'session', None) or requests.Session()
+            response = session.post(
                 url,
                 json=payload,
                 headers=headers,

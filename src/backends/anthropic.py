@@ -9,6 +9,7 @@ from typing import Dict, Any, Optional, AsyncIterator
 import json
 
 from .base import BaseBackend, ModelResponse
+from ..core.connection_pool import ConnectionPoolManager
 
 
 class AnthropicBackend(BaseBackend):
@@ -20,6 +21,12 @@ class AnthropicBackend(BaseBackend):
         self.base_url = config.get("base_url", "https://api.anthropic.com/v1")
         self.timeout = config.get("timeout", 120)
         self.api_version = config.get("api_version", "2023-06-01")
+        # Get session with connection pooling
+        self.session = ConnectionPoolManager.get_session(
+            "anthropic",
+            self.base_url,
+            config.get("pool_config")
+        )
     
     def is_available(self) -> bool:
         """Check if Anthropic API is available"""
@@ -33,7 +40,8 @@ class AnthropicBackend(BaseBackend):
                 "content-type": "application/json"
             }
             # Just check if we can reach the API
-            response = requests.get(
+            session = getattr(self, 'session', None) or requests.Session()
+            response = session.get(
                 f"{self.base_url.replace('/v1', '')}/v1/models",
                 headers={"x-api-key": self.api_key},
                 timeout=5
@@ -95,7 +103,8 @@ class AnthropicBackend(BaseBackend):
         payload.update(kwargs)
         
         try:
-            response = requests.post(
+            session = getattr(self, 'session', None) or requests.Session()
+            response = session.post(
                 url,
                 json=payload,
                 headers=headers,
