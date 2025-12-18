@@ -6,12 +6,31 @@ let conversationHistory = [];
 let downloadCheckInterval = null;
 let currentConversationId = null;
 let conversations = [];
+let favoriteModels = JSON.parse(localStorage.getItem('favoriteModels') || '[]');
+let unrestrictedMode = true; // Default to unrestricted
+let comparisonMode = false;
+let comparisonModels = [];
+let autoRouting = false;
 
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', () => {
     initializeTheme();
+    initializeMarkdown();
     initializeApp();
+    loadUnrestrictedMode();
 });
+
+// Configure markdown rendering
+function initializeMarkdown() {
+    if (typeof marked !== 'undefined') {
+        marked.setOptions({
+            breaks: true,
+            gfm: true,
+            headerIds: false,
+            mangle: false
+        });
+    }
+}
 
 // Theme management
 function initializeTheme() {
@@ -43,8 +62,23 @@ function toggleTheme() {
 async function initializeApp() {
     await checkStatus();
     await loadModels();
+    await autoSelectModel();  // Auto-select after models are loaded
     await loadConversations();
+    loadComparisonModels();
+    loadAutoRouting();
     setupEventListeners();
+    setupFileUpload();
+}
+
+function loadAutoRouting() {
+    const saved = localStorage.getItem('autoRouting');
+    if (saved === 'true') {
+        autoRouting = true;
+        const checkbox = document.getElementById('autoRouting');
+        if (checkbox) {
+            checkbox.checked = true;
+        }
+    }
 }
 
 // Status check
@@ -71,7 +105,54 @@ async function checkStatus() {
     }
 }
 
-// Load models
+// Backend display names and icons
+const backendInfo = {
+    'ollama': { name: 'Ollama (Local)', icon: '🖥️' },
+    'openai': { name: 'OpenAI (ChatGPT)', icon: '🤖' },
+    'anthropic': { name: 'Anthropic (Claude)', icon: '🧠' },
+    'google': { name: 'Google (Gemini)', icon: '🔍' },
+    'mistral-ai': { name: 'Mistral AI', icon: '🌊' },
+    'cohere': { name: 'Cohere', icon: '💬' },
+    'groq': { name: 'Groq (Fast)', icon: '⚡' },
+    'transformers': { name: 'Transformers (Local)', icon: '🔧' },
+    'gguf': { name: 'GGUF (Local)', icon: '📦' }
+};
+
+// Load models with folder-style dropdown
+// Auto-select best model on startup
+async function autoSelectModel(showNotification = false) {
+    try {
+        const response = await fetch('/api/models/auto-select');
+        const data = await response.json();
+        
+        if (data.status === 'ok' && data.data.selected_model) {
+            const selected = data.data.selected_model;
+            
+            // Only auto-select if no model is currently selected, or if explicitly requested
+            if (!currentModel || showNotification) {
+                currentModel = selected;
+                document.getElementById('modelSelect').value = selected;
+                updateModelSelectDisplay(selected);
+                updateModelInfo();
+                
+                if (showNotification) {
+                    showToast(`Auto-selected model: ${selected}`, 'success');
+                } else {
+                    console.log(`Auto-selected model: ${selected}`);
+                }
+                return true;
+            }
+        }
+        return false;
+    } catch (error) {
+        console.error('Error in auto-select:', error);
+        if (showNotification) {
+            showToast('Failed to auto-select model', 'error');
+        }
+        return false;
+    }
+}
+
 async function loadModels() {
     try {
         const response = await fetch('/api/models');
@@ -79,49 +160,328 @@ async function loadModels() {
         
         if (data.status === 'ok') {
             const modelSelect = document.getElementById('modelSelect');
-            modelSelect.innerHTML = '<option value="">Select a model...</option>';
+            const dropdownContent = document.getElementById('modelDropdownContent');
             
-            // Flatten models from all backends
+            // Organize models by backend
+            const modelsByBackend = {};
             const allModels = [];
+            
             for (const [backend, models] of Object.entries(data.models)) {
+                if (!modelsByBackend[backend]) {
+                    modelsByBackend[backend] = [];
+                }
                 for (const model of models) {
+                    modelsByBackend[backend].push(model);
                     allModels.push({ name: model, backend });
                 }
             }
             
             if (allModels.length === 0) {
+                dropdownContent.innerHTML = '<p style="padding: 1rem; color: var(--text-secondary);">No models available</p>';
                 modelSelect.innerHTML = '<option value="">No models available</option>';
                 return;
             }
             
-            allModels.forEach(model => {
-                const option = document.createElement('option');
-                option.value = model.name;
-                option.textContent = `${model.name} (${model.backend})`;
-                modelSelect.appendChild(option);
-            });
+            // Separate favorites by backend
+            const favoritesByBackend = {};
+            const regularModelsByBackend = {};
+            
+            for (const [backend, models] of Object.entries(modelsByBackend)) {
+                favoritesByBackend[backend] = models.filter(m => favoriteModels.includes(m));
+                regularModelsByBackend[backend] = models.filter(m => !favoriteModels.includes(m));
+            }
+            
+            // Build folder-style dropdown
+            let html = '';
+            
+            // Favorites section
+            let hasFavorites = false;
+            for (const [backend, models] of Object.entries(favoritesByBackend)) {
+                if (models.length > 0) {
+                    hasFavorites = true;
+                    break;
+                }
+            }
+            
+            if (hasFavorites) {
+                html += '<div class="model-favorites-section">';
+                html += '<div class="model-section-header">⭐ Favorites</div>';
+                
+                for (const [backend, models] of Object.entries(favoritesByBackend)) {
+                    if (models.length > 0) {
+                        const backendInfo_data = backendInfo[backend] || { name: backend, icon: '🔹' };
+                        html += createBackendFolder(backend, backendInfo_data, models, true, true); // Expanded by default
+                    }
+                }
+                
+                html += '</div>';
+            }
+            
+            // All models section
+            html += '<div class="model-all-section">';
+            for (const [backend, models] of Object.entries(regularModelsByBackend)) {
+                if (models.length > 0) {
+                    const backendInfo_data = backendInfo[backend] || { name: backend, icon: '🔹' };
+                    html += createBackendFolder(backend, backendInfo_data, models, false, false);
+                }
+            }
+            html += '</div>';
+            
+            dropdownContent.innerHTML = html;
+            
+            // Also update hidden select for compatibility
+            modelSelect.innerHTML = '<option value="">Select a model...</option>';
+            for (const [backend, models] of Object.entries(modelsByBackend)) {
+                models.forEach(model => {
+                    const option = document.createElement('option');
+                    option.value = model;
+                    option.textContent = model;
+                    modelSelect.appendChild(option);
+                });
+            }
             
             // Set default model if available
             if (allModels.length > 0 && !currentModel) {
-                currentModel = allModels[0].name;
-                modelSelect.value = currentModel;
-                updateModelInfo();
+                let defaultModel = null;
+                for (const [backend, models] of Object.entries(favoritesByBackend)) {
+                    if (models.length > 0) {
+                        defaultModel = models[0];
+                        break;
+                    }
+                }
+                if (!defaultModel) {
+                    for (const [backend, models] of Object.entries(regularModelsByBackend)) {
+                        if (models.length > 0) {
+                            defaultModel = models[0];
+                            break;
+                        }
+                    }
+                }
+                if (defaultModel) {
+                    currentModel = defaultModel;
+                    modelSelect.value = currentModel;
+                    updateModelSelectDisplay(defaultModel);
+                    updateModelInfo();
+                }
             }
+            
+            updateFavoriteModelsList();
         }
     } catch (error) {
         console.error('Failed to load models:', error);
-        showNotification('Failed to load models', 'error');
+        showToast('Failed to load models', 'error');
     }
 }
 
-// Update model info
-function updateModelInfo() {
-    const modelInfo = document.getElementById('modelInfo');
-    if (currentModel) {
-        modelInfo.textContent = `Selected: ${currentModel}`;
-    } else {
-        modelInfo.textContent = 'No model selected';
+function createBackendFolder(backend, backendInfo_data, models, isFavorite, isExpanded = false) {
+    const folderId = `folder-${backend}-${isFavorite ? 'fav' : 'all'}`;
+    let html = `<div class="model-backend-folder ${isExpanded ? 'expanded' : ''}" data-backend="${backend}">`;
+    html += `<div class="model-backend-header" onclick="toggleBackendFolder('${folderId}')">`;
+    html += `<div class="model-backend-name">`;
+    html += `<span class="model-backend-arrow">▶</span>`;
+    html += `<span class="model-backend-icon">${backendInfo_data.icon}</span>`;
+    html += `<span>${backendInfo_data.name}</span>`;
+    html += `<span style="margin-left: auto; color: var(--text-secondary); font-size: 0.75rem;">${models.length}</span>`;
+    html += `</div></div>`;
+    html += `<div class="model-backend-models" id="${folderId}">`;
+    
+    models.forEach(model => {
+        const isModelFavorite = favoriteModels.includes(model);
+        const isSelected = currentModel === model;
+        html += `<div class="model-item ${isModelFavorite ? 'favorite' : ''} ${isSelected ? 'selected' : ''}" onclick="selectModel('${model}')" data-model="${model}">`;
+        if (isModelFavorite) {
+            html += `<span class="model-item-favorite-icon">⭐</span>`;
+        }
+        html += `<span>${model}</span>`;
+        html += `</div>`;
+    });
+    
+    html += `</div></div>`;
+    return html;
+}
+
+function toggleBackendFolder(folderId) {
+    const folder = document.getElementById(folderId).closest('.model-backend-folder');
+    if (folder) {
+        folder.classList.toggle('expanded');
     }
+}
+
+function selectModel(modelName) {
+    currentModel = modelName;
+    document.getElementById('modelSelect').value = modelName;
+    updateModelSelectDisplay(modelName);
+    updateModelInfo();
+    closeModelDropdown();
+    showToast(`Selected: ${modelName}`, 'success');
+}
+
+function updateModelSelectDisplay(modelName) {
+    const display = document.getElementById('modelSelectText');
+    if (display && modelName) {
+        display.textContent = modelName;
+    } else if (display) {
+        display.textContent = 'Select a model...';
+    }
+    
+    // Update selected state in dropdown
+    document.querySelectorAll('.model-item').forEach(item => {
+        item.classList.remove('selected');
+        if (item.dataset.model === modelName) {
+            item.classList.add('selected');
+        }
+    });
+}
+
+function toggleModelDropdown() {
+    const dropdown = document.getElementById('modelDropdown');
+    const display = document.getElementById('modelSelectDisplay');
+    
+    if (dropdown && display) {
+        dropdown.classList.toggle('show');
+        display.classList.toggle('active');
+    }
+}
+
+function closeModelDropdown() {
+    const dropdown = document.getElementById('modelDropdown');
+    const display = document.getElementById('modelSelectDisplay');
+    const searchInput = document.getElementById('modelSearchInput');
+    
+    if (dropdown && display) {
+        dropdown.classList.remove('show');
+        display.classList.remove('active');
+    }
+    
+    // Clear search when closing
+    if (searchInput) {
+        searchInput.value = '';
+        filterModelDropdown(''); // Reset filter
+    }
+}
+
+function filterModelDropdown(searchTerm) {
+    const term = searchTerm.toLowerCase();
+    const folders = document.querySelectorAll('.model-backend-folder');
+    
+    folders.forEach(folder => {
+        const models = folder.querySelectorAll('.model-item');
+        let hasMatch = false;
+        
+        models.forEach(model => {
+            const modelName = model.dataset.model.toLowerCase();
+            if (modelName.includes(term)) {
+                model.style.display = '';
+                hasMatch = true;
+            } else {
+                model.style.display = 'none';
+            }
+        });
+        
+        // Expand folder if it has matches, hide if not
+        if (hasMatch) {
+            folder.style.display = '';
+            if (term) {
+                folder.classList.add('expanded');
+            }
+        } else {
+            folder.style.display = term ? 'none' : '';
+        }
+    });
+}
+
+// Close dropdown when clicking outside
+document.addEventListener('click', (e) => {
+    const container = document.querySelector('.model-select-container');
+    if (container && !container.contains(e.target)) {
+        closeModelDropdown();
+    }
+});
+
+// Model recommendations based on task
+const modelRecommendations = {
+    'code': ['codellama', 'deepseek-coder', 'gpt-4', 'claude-3-opus'],
+    'writing': ['llama3', 'mistral', 'gpt-3.5-turbo', 'claude-3-sonnet'],
+    'analysis': ['gpt-4', 'claude-3-opus', 'llama3', 'mistral-large'],
+    'chat': ['llama3', 'mistral', 'gpt-3.5-turbo', 'claude-3-haiku'],
+    'creative': ['gpt-4', 'claude-3-opus', 'mistral-large', 'llama3'],
+    'fast': ['groq', 'gpt-3.5-turbo', 'claude-3-haiku', 'mistral-tiny']
+};
+
+function recommendModel(task) {
+    const recommendations = modelRecommendations[task.toLowerCase()] || [];
+    if (recommendations.length > 0) {
+        // Check which recommended models are available
+        const modelSelect = document.getElementById('modelSelect');
+        const availableModels = Array.from(modelSelect.options).map(opt => opt.value).filter(v => v);
+        
+        for (const rec of recommendations) {
+            if (availableModels.includes(rec)) {
+                return rec;
+            }
+        }
+    }
+    return null;
+}
+
+// Update model info
+async function updateModelInfo() {
+    const modelInfo = document.getElementById('modelInfo');
+    if (!currentModel) {
+        modelInfo.innerHTML = '<span>No model selected</span>';
+        modelInfo.title = '';
+        return;
+    }
+    
+    // Find backend for this model
+    let backendName = 'Unknown';
+    try {
+        const response = await fetch('/api/models');
+        const data = await response.json();
+        if (data.status === 'ok') {
+            for (const [backend, models] of Object.entries(data.models)) {
+                if (models.includes(currentModel)) {
+                    backendName = backend;
+                    break;
+                }
+            }
+        }
+    } catch (error) {
+        console.error('Failed to get model info:', error);
+    }
+    
+    // Get backend display name
+    const backendDisplayNames = {
+        'ollama': 'Ollama (Local)',
+        'openai': 'OpenAI (ChatGPT)',
+        'anthropic': 'Anthropic (Claude)',
+        'google': 'Google (Gemini)',
+        'mistral-ai': 'Mistral AI',
+        'cohere': 'Cohere',
+        'groq': 'Groq (Fast Inference)',
+        'transformers': 'Transformers (Local)',
+        'gguf': 'GGUF (Local)'
+    };
+    
+    const displayName = backendDisplayNames[backendName] || backendName;
+    
+    // Determine model type for recommendations
+    let modelType = 'general';
+    if (currentModel.includes('code') || currentModel.includes('coder')) {
+        modelType = 'code';
+    } else if (currentModel.includes('gpt-4') || currentModel.includes('claude-3-opus')) {
+        modelType = 'analysis';
+    }
+    
+    const tooltip = `Model: ${currentModel}\nBackend: ${displayName}\nType: ${modelType}\n\n💡 Tip: Use this model for ${modelType === 'code' ? 'coding tasks' : modelType === 'analysis' ? 'complex analysis' : 'general tasks'}`;
+    
+    modelInfo.innerHTML = `
+        <span class="model-info-text" title="${tooltip.replace(/\n/g, ' ')}">
+            Selected: <strong>${currentModel}</strong>
+            <span class="model-backend-badge">${displayName}</span>
+        </span>
+    `;
+    modelInfo.title = tooltip;
 }
 
 // Setup event listeners
@@ -132,9 +492,10 @@ function setupEventListeners() {
     const newConversationBtn = document.getElementById('newConversationBtn');
     const conversationsSearch = document.getElementById('conversationsSearch');
     
-    // Model selection
+    // Model selection (for hidden select compatibility)
     modelSelect.addEventListener('change', (e) => {
         currentModel = e.target.value;
+        updateModelSelectDisplay(currentModel);
         updateModelInfo();
     });
     
@@ -155,6 +516,25 @@ function setupEventListeners() {
         chatInput.style.height = chatInput.scrollHeight + 'px';
     });
     
+    // Keyboard shortcuts
+    document.addEventListener('keydown', (e) => {
+        // Ctrl+K or Cmd+K: New conversation
+        if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+            e.preventDefault();
+            createNewConversation();
+        }
+        // Ctrl+L or Cmd+L: Clear chat
+        if ((e.ctrlKey || e.metaKey) && e.key === 'l') {
+            e.preventDefault();
+            clearChat();
+        }
+        // Ctrl+/ or Cmd+/: Show shortcuts (show about)
+        if ((e.ctrlKey || e.metaKey) && e.key === '/') {
+            e.preventDefault();
+            showAbout();
+        }
+    });
+    
     // New conversation button
     if (newConversationBtn) {
         newConversationBtn.addEventListener('click', createNewConversation);
@@ -168,14 +548,379 @@ function setupEventListeners() {
     }
 }
 
+// Comparison Mode Functions
+function toggleComparisonMode() {
+    comparisonMode = !comparisonMode;
+    const btn = document.getElementById('comparisonModeBtn');
+    const section = document.getElementById('comparisonModeSection');
+    
+    if (comparisonMode) {
+        btn.classList.add('active');
+        btn.style.background = 'var(--primary-color)';
+        btn.style.color = 'white';
+        if (section) section.style.display = 'block';
+        updateComparisonModelsList();
+    } else {
+        btn.classList.remove('active');
+        btn.style.background = '';
+        btn.style.color = '';
+        if (section) section.style.display = 'none';
+        comparisonModels = [];
+        updateComparisonModelsList();
+    }
+}
+
+function addComparisonModel() {
+    // Show model selector modal
+    const modelName = prompt('Enter model name to compare (or select from dropdown):');
+    if (modelName && modelName.trim()) {
+        const trimmedName = modelName.trim();
+        if (!comparisonModels.includes(trimmedName)) {
+            if (comparisonModels.length >= 5) {
+                showToast('Maximum 5 models can be compared', 'error');
+                return;
+            }
+            comparisonModels.push(trimmedName);
+            updateComparisonModelsList();
+            saveComparisonModels();
+            showToast(`Added ${trimmedName} to comparison`, 'success');
+        } else {
+            showToast('Model already added', 'info');
+        }
+    }
+}
+
+function addCurrentModelToComparison() {
+    if (!currentModel) {
+        showToast('Please select a model first', 'error');
+        return;
+    }
+    
+    if (comparisonModels.includes(currentModel)) {
+        showToast('Model already in comparison', 'info');
+        return;
+    }
+    
+    if (comparisonModels.length >= 5) {
+        showToast('Maximum 5 models can be compared', 'error');
+        return;
+    }
+    
+    comparisonModels.push(currentModel);
+    updateComparisonModelsList();
+    saveComparisonModels();
+    showToast(`Added ${currentModel} to comparison`, 'success');
+}
+
+function removeComparisonModel(modelName) {
+    comparisonModels = comparisonModels.filter(m => m !== modelName);
+    updateComparisonModelsList();
+    saveComparisonModels();
+}
+
+function clearComparisonModels() {
+    comparisonModels = [];
+    updateComparisonModelsList();
+    saveComparisonModels();
+}
+
+function updateComparisonModelsList() {
+    const list = document.getElementById('comparisonModelsList');
+    if (!list) return;
+    
+    if (comparisonModels.length === 0) {
+        list.innerHTML = '<p style="color: var(--text-secondary); font-size: 0.875rem;">No models selected</p>';
+        return;
+    }
+    
+    let html = '<div style="display: flex; flex-direction: column; gap: 0.5rem;">';
+    comparisonModels.forEach(model => {
+        html += `
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem; background: var(--surface-light); border-radius: 0.375rem; border: 1px solid var(--border-color);">
+                <span style="font-size: 0.875rem;">${model}</span>
+                <button class="btn-icon" onclick="removeComparisonModel('${model}')" style="padding: 0.25rem; font-size: 0.75rem;" title="Remove">×</button>
+            </div>
+        `;
+    });
+    html += '</div>';
+    list.innerHTML = html;
+    
+    // Update counter
+    const counter = document.getElementById('comparisonModelCount');
+    if (counter) {
+        counter.textContent = `${comparisonModels.length}/5 models`;
+    }
+}
+
+function saveComparisonModels() {
+    localStorage.setItem('comparisonModels', JSON.stringify(comparisonModels));
+}
+
+function loadComparisonModels() {
+    const saved = localStorage.getItem('comparisonModels');
+    if (saved) {
+        try {
+            comparisonModels = JSON.parse(saved);
+            if (comparisonMode) {
+                updateComparisonModelsList();
+            }
+        } catch (e) {
+            console.error('Error loading comparison models:', e);
+        }
+    }
+    
+    // Load ensemble mode setting
+    const ensembleMode = localStorage.getItem('ensembleMode') === 'true';
+    const ensembleCheckbox = document.getElementById('ensembleMode');
+    if (ensembleCheckbox) {
+        ensembleCheckbox.checked = ensembleMode;
+    }
+    
+    // Load ensemble method
+    const ensembleMethod = localStorage.getItem('ensembleMethod') || 'majority_vote';
+    const methodSelect = document.getElementById('ensembleMethod');
+    if (methodSelect) {
+        methodSelect.value = ensembleMethod;
+    }
+}
+
+function updateEnsembleMode() {
+    const checkbox = document.getElementById('ensembleMode');
+    if (checkbox) {
+        localStorage.setItem('ensembleMode', checkbox.checked);
+    }
+    
+    const methodSelect = document.getElementById('ensembleMethod');
+    if (methodSelect) {
+        localStorage.setItem('ensembleMethod', methodSelect.value);
+    }
+}
+
+// Ensemble Message Function
+async function sendEnsembleMessage(prompt) {
+    if (comparisonModels.length < 2) {
+        showToast('Please select at least 2 models for ensemble', 'error');
+        return;
+    }
+    
+    if (comparisonModels.length > 5) {
+        showToast('Maximum 5 models can be used in ensemble', 'error');
+        return;
+    }
+    
+    const chatInput = document.getElementById('chatInput');
+    const sendButton = document.getElementById('sendButton');
+    
+    // Disable input
+    chatInput.disabled = true;
+    sendButton.disabled = true;
+    sendButton.innerHTML = '<span class="loading"></span> Generating ensemble...';
+    
+    // Add user message
+    addMessage('user', prompt);
+    
+    // Clear input
+    chatInput.value = '';
+    chatInput.style.height = 'auto';
+    updateWordCount();
+    
+    // Get settings
+    const temperature = parseFloat(document.getElementById('temperature').value);
+    const systemPrompt = document.getElementById('systemPrompt').value || undefined;
+    const method = document.getElementById('ensembleMethod')?.value || 'majority_vote';
+    
+    try {
+        const response = await fetch('/api/chat/ensemble', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                prompt: prompt,
+                models: comparisonModels,
+                system_prompt: systemPrompt,
+                temperature: temperature,
+                method: method,
+                disable_safety_filters: unrestrictedMode
+            })
+        });
+        
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.message || 'Ensemble generation failed');
+        }
+        
+        const data = await response.json();
+        
+        if (data.status === 'ok') {
+            // Display ensemble result
+            displayEnsembleResult(prompt, data.data);
+        } else {
+            throw new Error(data.message || 'Ensemble generation failed');
+        }
+    } catch (error) {
+        console.error('Error in ensemble:', error);
+        showToast(`Ensemble failed: ${error.message}`, 'error', 5000);
+        addMessage('assistant', `**Error:** ${error.message}`, true);
+    } finally {
+        // Re-enable input
+        chatInput.disabled = false;
+        sendButton.disabled = false;
+        sendButton.innerHTML = '<span>Send</span>';
+        chatInput.focus();
+    }
+}
+
+function displayEnsembleResult(prompt, data) {
+    const chatMessages = document.getElementById('chatMessages');
+    
+    // Create ensemble container
+    const ensembleDiv = document.createElement('div');
+    ensembleDiv.className = 'ensemble-container';
+    ensembleDiv.id = `ensemble-${Date.now()}`;
+    
+    const methodNames = {
+        'majority_vote': 'Majority Vote',
+        'best': 'Best Response',
+        'longest': 'Longest Response',
+        'concatenate': 'Concatenated',
+        'average': 'All Responses'
+    };
+    
+    let html = `
+        <div class="ensemble-header">
+            <h4>🔀 Ensemble Response</h4>
+            <div style="display: flex; gap: 1rem; align-items: center; font-size: 0.875rem; color: var(--text-secondary);">
+                <span>Method: <strong>${methodNames[data.method] || data.method}</strong></span>
+                <span>Models: ${data.models_used.join(', ')}</span>
+            </div>
+        </div>
+        <div class="ensemble-content">
+            ${renderMarkdown(data.response)}
+        </div>
+    `;
+    
+    // Show individual responses in collapsible section
+    if (data.individual_responses && data.individual_responses.length > 0) {
+        html += `
+            <div class="ensemble-individual" style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border-color);">
+                <details style="cursor: pointer;">
+                    <summary style="font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 0.5rem;">
+                        View Individual Responses (${data.individual_responses.length})
+                    </summary>
+                    <div style="display: flex; flex-direction: column; gap: 0.75rem; margin-top: 0.5rem;">
+        `;
+        
+        data.individual_responses.forEach(resp => {
+            html += `
+                <div style="padding: 0.75rem; background: var(--surface-light); border-radius: 0.375rem; border: 1px solid var(--border-color);">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem; font-size: 0.875rem;">
+                        <strong>${resp.model}</strong>
+                        <span style="color: var(--text-secondary);">${resp.response_time}s</span>
+                    </div>
+                    <div style="font-size: 0.875rem;">
+                        ${renderMarkdown(resp.response)}
+                    </div>
+                </div>
+            `;
+        });
+        
+        html += `
+                    </div>
+                </details>
+            </div>
+        `;
+    }
+    
+    html += '</div>';
+    ensembleDiv.innerHTML = html;
+    
+    chatMessages.appendChild(ensembleDiv);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+// Auto Routing Functions
+function toggleAutoRouting(enabled) {
+    autoRouting = enabled;
+    localStorage.setItem('autoRouting', enabled);
+    
+    if (enabled) {
+        showToast('Auto routing enabled - models will be selected automatically', 'success');
+    } else {
+        showToast('Auto routing disabled', 'info');
+    }
+}
+
+async function routeToBestModel(prompt) {
+    try {
+        const response = await fetch('/api/chat/route', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                prompt: prompt
+            })
+        });
+        
+        if (!response.ok) {
+            throw new Error('Routing failed');
+        }
+        
+        const data = await response.json();
+        if (data.status === 'ok' && data.data.recommended_model) {
+            const recommended = data.data.recommended_model;
+            const task = data.data.detected_task;
+            const confidence = data.data.confidence;
+            
+            // Switch to recommended model
+            if (recommended !== currentModel) {
+                currentModel = recommended;
+                document.getElementById('modelSelect').value = recommended;
+                updateModelSelectDisplay(recommended);
+                updateModelInfo();
+                
+                showToast(
+                    `Auto-routed to ${recommended} (${task}, ${Math.round(confidence * 100)}% confidence)`,
+                    'success',
+                    3000
+                );
+            }
+            
+            return true;
+        }
+    } catch (error) {
+        console.error('Error in auto routing:', error);
+        // Don't show error to user, just fall back to current model
+    }
+    return false;
+}
+
 // Send message
 async function sendMessage() {
     const chatInput = document.getElementById('chatInput');
     const message = chatInput.value.trim();
     
     if (!message) return;
+    
+    // Check if comparison mode is active
+    if (comparisonMode && comparisonModels.length >= 2) {
+        const ensembleMode = document.getElementById('ensembleMode')?.checked || false;
+        if (ensembleMode) {
+            await sendEnsembleMessage(message);
+        } else {
+            await sendComparisonMessage(message);
+        }
+        return;
+    }
+    
+    // Auto routing
+    if (autoRouting) {
+        await routeToBestModel(message);
+    }
+    
     if (!currentModel) {
-        showNotification('Please select a model first', 'error');
+        showToast('Please select a model first', 'error');
         return;
     }
     
@@ -183,6 +928,7 @@ async function sendMessage() {
     chatInput.disabled = true;
     const sendButton = document.getElementById('sendButton');
     sendButton.disabled = true;
+    sendButton.innerHTML = '<span class="loading"></span> Sending...';
     
     // Add user message to chat
     addMessage('user', message);
@@ -190,6 +936,7 @@ async function sendMessage() {
     // Clear input
     chatInput.value = '';
     chatInput.style.height = 'auto';
+    updateWordCount();
     
     // Get settings
     const temperature = parseFloat(document.getElementById('temperature').value);
@@ -204,12 +951,28 @@ async function sendMessage() {
         }
     } catch (error) {
         console.error('Error sending message:', error);
-        addMessage('assistant', `Error: ${error.message}`, true);
-        showNotification('Failed to send message', 'error');
+        const errorMsg = error.message || 'An unexpected error occurred. Please try again.';
+        
+        // Graceful degradation: try to provide helpful error message
+        let helpfulMsg = `**Error:** ${errorMsg}\n\n`;
+        
+        if (errorMsg.includes('network') || errorMsg.includes('fetch') || errorMsg.includes('Failed to fetch')) {
+            helpfulMsg += '**Network Error:**\n- Check your internet connection\n- For API models, verify your API key is configured\n- Try again in a moment';
+        } else if (errorMsg.includes('model') || errorMsg.includes('backend') || errorMsg.includes('not available')) {
+            helpfulMsg += '**Model Error:**\n- Verify the model is available and selected\n- Check if the backend is running (for local models)\n- Try selecting a different model';
+        } else if (errorMsg.includes('429') || errorMsg.includes('rate limit')) {
+            helpfulMsg += '**Rate Limit Error:**\n- Too many requests. Please wait a moment and try again\n- Consider using a different model or backend';
+        } else {
+            helpfulMsg += '**Troubleshooting:**\n- Check your model is selected and available\n- Verify your internet connection (for API models)\n- Check the server logs for more details';
+        }
+        
+        addMessage('assistant', helpfulMsg, true);
+        showToast(`Failed to send message: ${errorMsg}`, 'error', 5000);
     } finally {
         // Re-enable input
         chatInput.disabled = false;
         sendButton.disabled = false;
+        sendButton.innerHTML = '<span>Send</span>';
         chatInput.focus();
     }
 }
@@ -227,14 +990,35 @@ async function sendMessageNormal(prompt, temperature, systemPrompt) {
             temperature,
             system_prompt: systemPrompt,
             stream: false,
-            conversation_id: currentConversationId
+            conversation_id: currentConversationId,
+            unrestricted_mode: unrestrictedMode
         })
     });
+    
+    if (!response.ok) {
+        // Try to get error message from response
+        let errorMsg = `HTTP ${response.status}: ${response.statusText}`;
+        try {
+            const errorData = await response.json();
+            errorMsg = errorData.message || errorMsg;
+        } catch (e) {
+            // If response isn't JSON, use status text
+        }
+        throw new Error(errorMsg);
+    }
     
     const data = await response.json();
     
     if (data.status === 'ok') {
         addMessage('assistant', data.response);
+        
+        // Show performance metrics if available
+        if (data.metadata && data.metadata.response_time) {
+            const metrics = data.metadata;
+            const metricsText = `\n\n*Response time: ${metrics.response_time}s | Length: ${metrics.response_length} chars*`;
+            // Could append to message or show in a tooltip
+        }
+        
         // Update conversation ID if returned
         if (data.conversation_id) {
             currentConversationId = data.conversation_id;
@@ -258,7 +1042,8 @@ async function sendMessageStream(prompt, temperature, systemPrompt) {
             temperature,
             system_prompt: systemPrompt,
             stream: true,
-            conversation_id: currentConversationId
+            conversation_id: currentConversationId,
+            unrestricted_mode: unrestrictedMode
         })
     });
     
@@ -320,7 +1105,7 @@ function addMessage(role, text, isStreaming = false) {
     
     const messageDiv = document.createElement('div');
     messageDiv.className = `message ${role}`;
-    messageDiv.id = isStreaming ? `msg-${Date.now()}` : undefined;
+    messageDiv.id = isStreaming ? `msg-${Date.now()}` : `msg-${Date.now()}`;
     
     const avatar = document.createElement('div');
     avatar.className = 'message-avatar';
@@ -331,9 +1116,52 @@ function addMessage(role, text, isStreaming = false) {
     
     const textDiv = document.createElement('div');
     textDiv.className = 'message-text';
-    textDiv.textContent = text;
+    
+    // Render markdown for assistant messages, plain text for user
+    if (role === 'assistant' && typeof marked !== 'undefined') {
+        textDiv.innerHTML = marked.parse(text);
+        // Highlight code blocks
+        textDiv.querySelectorAll('pre code').forEach((block) => {
+            if (typeof hljs !== 'undefined') {
+                hljs.highlightElement(block);
+            }
+        });
+    } else {
+        textDiv.textContent = text;
+    }
+    
+    // Add message actions
+    const actionsDiv = document.createElement('div');
+    actionsDiv.className = 'message-actions';
+    
+    // Copy button
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'btn-icon';
+    copyBtn.innerHTML = '📋';
+    copyBtn.title = 'Copy message';
+    copyBtn.onclick = () => copyMessage(text, copyBtn);
+    actionsDiv.appendChild(copyBtn);
+    
+    // Edit/Regenerate button (for assistant messages)
+    if (role === 'assistant') {
+        const regenerateBtn = document.createElement('button');
+        regenerateBtn.className = 'btn-icon';
+        regenerateBtn.innerHTML = '🔄';
+        regenerateBtn.title = 'Regenerate response';
+        regenerateBtn.onclick = () => regenerateMessage(messageDiv.id, text);
+        actionsDiv.appendChild(regenerateBtn);
+    }
+    
+    // Delete button
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'btn-icon';
+    deleteBtn.innerHTML = '🗑️';
+    deleteBtn.title = 'Delete message';
+    deleteBtn.onclick = () => deleteMessage(messageDiv.id);
+    actionsDiv.appendChild(deleteBtn);
     
     content.appendChild(textDiv);
+    content.appendChild(actionsDiv);
     messageDiv.appendChild(avatar);
     messageDiv.appendChild(content);
     
@@ -350,7 +1178,28 @@ function appendToMessage(messageId, chunk) {
     
     const textDiv = messageDiv.querySelector('.message-text');
     if (textDiv) {
-        textDiv.textContent += chunk;
+        // Get current text and append chunk
+        const currentText = textDiv.textContent || '';
+        const newText = currentText + chunk;
+        
+        // Re-render markdown
+        if (typeof marked !== 'undefined') {
+            textDiv.innerHTML = marked.parse(newText);
+            // Re-highlight code blocks
+            textDiv.querySelectorAll('pre code').forEach((block) => {
+                if (typeof hljs !== 'undefined') {
+                    hljs.highlightElement(block);
+                }
+            });
+        } else {
+            textDiv.textContent = newText;
+        }
+        
+        // Update copy button
+        const copyBtn = messageDiv.querySelector('.btn-icon');
+        if (copyBtn) {
+            copyBtn.onclick = () => copyMessage(newText, copyBtn);
+        }
         
         const chatMessages = document.getElementById('chatMessages');
         chatMessages.scrollTop = chatMessages.scrollHeight;
@@ -490,13 +1339,33 @@ function createModelCard(model, backend, isInstalled, canDownload = false) {
     const desc = document.createElement('p');
     if (typeof model === 'object') {
         let descText = model.description || 'No description available';
-        if (model.size) {
-            descText += ` • ${model.size}`;
-        }
-        if (model.tags && model.tags.length > 0) {
-            descText += ` • Tags: ${model.tags.join(', ')}`;
-        }
         desc.textContent = descText;
+        
+        // Add size badge if available
+        if (model.size) {
+            const sizeBadge = document.createElement('span');
+            sizeBadge.className = 'model-size-badge';
+            sizeBadge.textContent = `📦 ${model.size}`;
+            sizeBadge.title = `Model size: ${model.size}`;
+            desc.appendChild(document.createTextNode(' • '));
+            desc.appendChild(sizeBadge);
+        }
+        
+        // Add tags if available
+        if (model.tags && model.tags.length > 0) {
+            const tagsText = document.createTextNode(` • Tags: ${model.tags.join(', ')}`);
+            desc.appendChild(tagsText);
+        }
+        
+        // Add update indicator if update is available
+        if (model.has_update) {
+            const updateBadge = document.createElement('span');
+            updateBadge.className = 'model-update-badge';
+            updateBadge.textContent = '🔄 Update Available';
+            updateBadge.title = `Update available: ${model.latest_version || 'latest version'}`;
+            desc.appendChild(document.createTextNode(' • '));
+            desc.appendChild(updateBadge);
+        }
     } else {
         desc.textContent = `Backend: ${backend}`;
     }
@@ -507,6 +1376,18 @@ function createModelCard(model, backend, isInstalled, canDownload = false) {
     const actions = document.createElement('div');
     actions.className = 'model-card-actions';
     
+    // Favorite button
+    const favoriteBtn = document.createElement('button');
+    favoriteBtn.className = 'btn-icon';
+    const isFavorite = favoriteModels.includes(modelName);
+    favoriteBtn.innerHTML = isFavorite ? '⭐' : '☆';
+    favoriteBtn.title = isFavorite ? 'Remove from favorites' : 'Add to favorites';
+    favoriteBtn.onclick = (e) => {
+        e.stopPropagation();
+        toggleFavorite(modelName, favoriteBtn);
+    };
+    actions.appendChild(favoriteBtn);
+    
     if (isInstalled) {
         const useBtn = document.createElement('button');
         useBtn.className = 'btn btn-primary btn-small';
@@ -516,9 +1397,31 @@ function createModelCard(model, backend, isInstalled, canDownload = false) {
             document.getElementById('modelSelect').value = currentModel;
             updateModelInfo();
             closeModelManager();
-            showNotification(`Switched to ${currentModel}`, 'success');
+            showToast(`Switched to ${currentModel}`, 'success');
         };
         actions.appendChild(useBtn);
+        
+        // Check update button
+        const checkUpdateBtn = document.createElement('button');
+        checkUpdateBtn.className = 'btn btn-secondary btn-small';
+        checkUpdateBtn.textContent = 'Check Update';
+        checkUpdateBtn.onclick = (e) => {
+            e.stopPropagation();
+            checkModelUpdate(modelName, backend, card);
+        };
+        actions.appendChild(checkUpdateBtn);
+        
+        // Delete button (only for local backends that support deletion)
+        if (backend === 'ollama' || backend === 'transformers' || backend === 'gguf') {
+            const deleteBtn = document.createElement('button');
+            deleteBtn.className = 'btn btn-danger btn-small';
+            deleteBtn.textContent = 'Delete';
+            deleteBtn.onclick = (e) => {
+                e.stopPropagation();
+                deleteModel(modelName, backend);
+            };
+            actions.appendChild(deleteBtn);
+        }
     } else if (canDownload || (typeof model === 'object' && !model.installed)) {
         const downloadBtn = document.createElement('button');
         downloadBtn.className = 'btn btn-success btn-small';
@@ -532,6 +1435,178 @@ function createModelCard(model, backend, isInstalled, canDownload = false) {
     card.appendChild(actions);
     
     return card;
+}
+
+// Delete model
+async function deleteModel(modelName, backendName = 'ollama') {
+    if (!confirm(`Are you sure you want to delete "${modelName}"? This action cannot be undone.`)) {
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/models/delete', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                model: modelName,
+                backend: backendName
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.status === 'ok') {
+            showToast(`Model "${modelName}" deleted successfully`, 'success');
+            // Reload models
+            await loadInstalledModels();
+            await loadAvailableModels();
+            await loadModels(); // Refresh main model list
+        } else {
+            showToast(data.message || 'Failed to delete model', 'error');
+        }
+    } catch (error) {
+        console.error('Failed to delete model:', error);
+        showToast('Failed to delete model', 'error');
+    }
+}
+
+// Check for model update
+async function checkModelUpdate(modelName, backendName = 'ollama', cardElement = null) {
+    try {
+        const response = await fetch('/api/models/check-update', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                model: modelName,
+                backend: backendName
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.status === 'ok') {
+            const updateInfo = data.data;
+            
+            if (updateInfo.has_update) {
+                const message = `Update available for "${modelName}"!\n\n` +
+                              `Current: ${updateInfo.current_version || 'installed'}\n` +
+                              `Latest: ${updateInfo.latest_version || 'latest'}\n\n` +
+                              `Would you like to update now?`;
+                
+                if (confirm(message)) {
+                    // Trigger download/update
+                    await downloadModel(modelName, backendName);
+                }
+                
+                // Update card if provided
+                if (cardElement) {
+                    const updateBadge = cardElement.querySelector('.model-update-badge');
+                    if (!updateBadge) {
+                        const desc = cardElement.querySelector('.model-card-info p');
+                        if (desc) {
+                            const badge = document.createElement('span');
+                            badge.className = 'model-update-badge';
+                            badge.textContent = '🔄 Update Available';
+                            badge.title = `Update available: ${updateInfo.latest_version || 'latest version'}`;
+                            desc.appendChild(document.createTextNode(' • '));
+                            desc.appendChild(badge);
+                        }
+                    }
+                }
+            } else {
+                showToast(`"${modelName}" is up to date`, 'success');
+            }
+        } else {
+            showToast(data.message || 'Failed to check for updates', 'error');
+        }
+    } catch (error) {
+        console.error('Failed to check for updates:', error);
+        showToast('Failed to check for updates', 'error');
+    }
+}
+
+// Check for updates for all installed models
+async function checkAllUpdates(backendName = null) {
+    try {
+        showToast('Checking for updates...', 'info');
+        
+        // If backend is specified, check only that backend
+        if (backendName) {
+            const response = await fetch('/api/models/check-all-updates', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    backend: backendName
+                })
+            });
+            
+            const data = await response.json();
+            
+            if (data.status === 'ok') {
+                const updateData = data.data;
+                const modelsWithUpdates = updateData.models_with_updates || 0;
+                
+                if (modelsWithUpdates > 0) {
+                    showToast(`${modelsWithUpdates} model(s) have updates available`, 'info', 5000);
+                    // Reload models to show update indicators
+                    await loadInstalledModels();
+                    await loadAvailableModels();
+                } else {
+                    showToast('All models are up to date', 'success');
+                }
+            } else {
+                showToast(data.message || 'Failed to check for updates', 'error');
+            }
+        } else {
+            // Check all backends
+            const response = await fetch('/api/status');
+            const statusData = await response.json();
+            
+            if (statusData.status === 'ok') {
+                let totalUpdates = 0;
+                const backends = Object.keys(statusData.backends || {});
+                
+                for (const backend of backends) {
+                    try {
+                        const updateResponse = await fetch('/api/models/check-all-updates', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                backend: backend
+                            })
+                        });
+                        
+                        const updateData = await updateResponse.json();
+                        if (updateData.status === 'ok') {
+                            totalUpdates += updateData.data.models_with_updates || 0;
+                        }
+                    } catch (error) {
+                        console.error(`Failed to check updates for ${backend}:`, error);
+                    }
+                }
+                
+                if (totalUpdates > 0) {
+                    showToast(`${totalUpdates} model(s) have updates available`, 'info', 5000);
+                    // Reload models to show update indicators
+                    await loadInstalledModels();
+                    await loadAvailableModels();
+                } else {
+                    showToast('All models are up to date', 'success');
+                }
+            }
+        }
+    } catch (error) {
+        console.error('Failed to check for updates:', error);
+        showToast('Failed to check for updates', 'error');
+    }
 }
 
 // Download model
@@ -692,11 +1767,14 @@ function showDownloadModal(downloadId, modelName) {
 
 // Show notification
 function showNotification(message, type = 'info') {
-    // Simple notification - you can enhance this with a proper toast system
-    console.log(`[${type.toUpperCase()}] ${message}`);
-    // For now, just alert - can be replaced with a toast notification component
-    if (type === 'error') {
-        alert(`Error: ${message}`);
+    // Use toast system if available, otherwise fallback
+    if (typeof showToast !== 'undefined') {
+        showToast(message, type);
+    } else {
+        console.log(`[${type.toUpperCase()}] ${message}`);
+        if (type === 'error') {
+            alert(`Error: ${message}`);
+        }
     }
 }
 
@@ -771,6 +1849,12 @@ function renderConversations() {
         const title = document.createElement('div');
         title.className = 'conversation-item-title';
         title.textContent = conv.title || 'Untitled Conversation';
+        title.title = 'Click to rename';
+        title.style.cursor = 'pointer';
+        title.onclick = (e) => {
+            e.stopPropagation();
+            renameConversation(conv.id, title);
+        };
         titleDiv.appendChild(title);
         
         const meta = document.createElement('div');
@@ -891,6 +1975,41 @@ async function loadConversation(convId) {
     }
 }
 
+// Rename conversation
+async function renameConversation(convId, titleElement) {
+    const currentTitle = titleElement.textContent;
+    const newTitle = prompt('Enter new conversation title:', currentTitle);
+    
+    if (!newTitle || newTitle.trim() === '' || newTitle === currentTitle) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/api/conversations/${convId}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                title: newTitle.trim()
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.status === 'ok') {
+            titleElement.textContent = newTitle.trim();
+            showToast('Conversation renamed', 'success');
+            await loadConversations(); // Refresh list
+        } else {
+            showToast(data.message || 'Failed to rename conversation', 'error');
+        }
+    } catch (error) {
+        console.error('Failed to rename conversation:', error);
+        showToast('Failed to rename conversation', 'error');
+    }
+}
+
 async function deleteConversation(convId) {
     if (!confirm('Are you sure you want to delete this conversation?')) {
         return;
@@ -930,10 +2049,1357 @@ async function exportConversation(convId) {
         a.click();
         window.URL.revokeObjectURL(url);
         document.body.removeChild(a);
-        showNotification('Conversation exported', 'success');
+        showToast('Conversation exported', 'success');
     } catch (error) {
         console.error('Failed to export conversation:', error);
-        showNotification('Failed to export conversation', 'error');
+        showToast('Failed to export conversation', 'error');
     }
 }
+
+// Copy message to clipboard
+// Load unrestricted mode setting
+async function loadUnrestrictedMode() {
+    try {
+        const response = await fetch('/api/config/unrestricted-mode');
+        const data = await response.json();
+        if (data.status === 'ok') {
+            unrestrictedMode = data.unrestricted_mode !== false; // Default to true
+            const checkbox = document.getElementById('unrestrictedMode');
+            if (checkbox) {
+                checkbox.checked = unrestrictedMode;
+            }
+        }
+    } catch (error) {
+        console.error('Failed to load unrestricted mode setting:', error);
+        // Default to unrestricted
+        unrestrictedMode = true;
+        const checkbox = document.getElementById('unrestrictedMode');
+        if (checkbox) {
+            checkbox.checked = true;
+        }
+    }
+}
+
+// Toggle unrestricted mode
+async function toggleUnrestrictedMode(enabled) {
+    unrestrictedMode = enabled;
+    try {
+        const response = await fetch('/api/config/unrestricted-mode', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                unrestricted_mode: enabled,
+                disable_safety_filters: enabled
+            })
+        });
+        
+        const data = await response.json();
+        if (data.status === 'ok') {
+            showToast(
+                enabled 
+                    ? '🆓 Unrestricted mode enabled - Complete freedom' 
+                    : '🔒 Restricted mode enabled - Safety filters active',
+                'success'
+            );
+        } else {
+            showToast('Failed to update unrestricted mode setting', 'error');
+            // Revert checkbox
+            const checkbox = document.getElementById('unrestrictedMode');
+            if (checkbox) {
+                checkbox.checked = !enabled;
+            }
+            unrestrictedMode = !enabled;
+        }
+    } catch (error) {
+        console.error('Failed to update unrestricted mode:', error);
+        showToast('Failed to update unrestricted mode setting', 'error');
+        // Revert checkbox
+        const checkbox = document.getElementById('unrestrictedMode');
+        if (checkbox) {
+            checkbox.checked = !enabled;
+        }
+        unrestrictedMode = !enabled;
+    }
+}
+
+async function copyMessage(text, button) {
+    try {
+        await navigator.clipboard.writeText(text);
+        const originalText = button.innerHTML;
+        button.innerHTML = '✓';
+        button.style.color = 'var(--success)';
+        showToast('Message copied to clipboard!', 'success');
+        setTimeout(() => {
+            button.innerHTML = originalText;
+            button.style.color = '';
+        }, 2000);
+    } catch (error) {
+        console.error('Failed to copy:', error);
+        showToast('Failed to copy message', 'error');
+    }
+}
+
+// Clear chat
+function clearChat() {
+    const chatMessages = document.getElementById('chatMessages');
+    const messages = chatMessages.querySelectorAll('.message');
+    
+    if (messages.length === 0) {
+        showToast('Chat is already empty', 'info');
+        return;
+    }
+    
+    if (confirm('Are you sure you want to clear the chat? This will remove all messages from the current view.')) {
+        chatMessages.innerHTML = `
+            <div class="welcome-message">
+                <h2>Welcome to LocalMind</h2>
+                <p>Select a model and start chatting! Your conversations stay local and private.</p>
+                <p style="margin-top: 1rem; font-size: 0.875rem; color: var(--text-secondary);">
+                    💡 Tip: Press <kbd>Ctrl+K</kbd> for new chat, <kbd>Ctrl+/</kbd> for shortcuts
+                </p>
+            </div>
+        `;
+        conversationHistory = [];
+        showToast('Chat cleared', 'success');
+    }
+}
+
+// Toast notifications (improved version)
+function showToast(message, type = 'info', duration = 3000) {
+    const container = document.getElementById('toastContainer');
+    if (!container) {
+        // Fallback to old notification if container doesn't exist
+        showNotification(message, type);
+        return;
+    }
+    
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.textContent = message;
+    
+    container.appendChild(toast);
+    
+    // Trigger animation
+    setTimeout(() => toast.classList.add('show'), 10);
+    
+    // Remove after duration
+    setTimeout(() => {
+        toast.classList.remove('show');
+        setTimeout(() => toast.remove(), 300);
+    }, duration);
+}
+
+// About modal
+async function showAbout() {
+    const modal = document.getElementById('aboutModal');
+    if (modal) {
+        modal.classList.add('active');
+        await Promise.all([loadSystemInfo(), loadChangelog()]);
+    }
+}
+
+// Load system information
+async function loadSystemInfo() {
+    const systemInfoDiv = document.getElementById('systemInfo');
+    if (!systemInfoDiv) return;
+    
+    try {
+        const response = await fetch('/api/status');
+        const data = await response.json();
+        
+        if (data.status === 'ok' && data.system) {
+            const sys = data.system;
+            systemInfoDiv.innerHTML = `
+                <p><strong>Platform:</strong> ${sys.platform} ${sys.platform_version || ''}</p>
+                <p><strong>Python:</strong> ${sys.python_version}</p>
+                <p><strong>Architecture:</strong> ${sys.architecture}</p>
+                ${sys.processor && sys.processor !== 'N/A' ? `<p><strong>Processor:</strong> ${sys.processor}</p>` : ''}
+            `;
+        } else {
+            systemInfoDiv.innerHTML = '<p style="color: var(--text-secondary);">System information unavailable</p>';
+        }
+    } catch (error) {
+        console.error('Failed to load system info:', error);
+        systemInfoDiv.innerHTML = '<p style="color: var(--error);">Failed to load system information</p>';
+    }
+}
+
+// Load changelog
+async function loadChangelog() {
+    const changelogDiv = document.getElementById('changelogContent');
+    if (!changelogDiv) return;
+    
+    try {
+        const response = await fetch('/api/changelog');
+        const data = await response.json();
+        
+        if (data.status === 'ok' && data.changelog) {
+            // Convert markdown to HTML using marked if available
+            if (typeof marked !== 'undefined') {
+                changelogDiv.innerHTML = marked.parse(data.changelog);
+            } else {
+                // Fallback: simple text display with basic formatting
+                changelogDiv.innerHTML = '<pre style="white-space: pre-wrap; font-family: inherit; margin: 0;">' + 
+                    data.changelog.replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</pre>';
+            }
+        } else {
+            changelogDiv.innerHTML = '<p style="color: var(--text-secondary);">Changelog unavailable</p>';
+        }
+    } catch (error) {
+        console.error('Failed to load changelog:', error);
+        changelogDiv.innerHTML = '<p style="color: var(--text-secondary);">Failed to load changelog</p>';
+    }
+}
+
+function closeAbout() {
+    const modal = document.getElementById('aboutModal');
+    if (modal) {
+        modal.classList.remove('active');
+    }
+}
+
+// Close modals on outside click
+document.addEventListener('click', (e) => {
+    if (e.target.classList.contains('modal')) {
+        e.target.classList.remove('active');
+    }
+});
+
+// Show QR Code
+function showQRCode() {
+    const modal = document.getElementById('qrCodeModal');
+    const qrDiv = document.getElementById('qrcode');
+    const urlDiv = document.getElementById('qrCodeUrl');
+    
+    if (!modal || !qrDiv) return;
+    
+    // Get current URL
+    const currentUrl = window.location.href;
+    urlDiv.textContent = currentUrl;
+    
+    // Clear previous QR code
+    qrDiv.innerHTML = '';
+    
+    // Generate QR code
+    if (typeof QRCode !== 'undefined') {
+        new QRCode(qrDiv, {
+            text: currentUrl,
+            width: 256,
+            height: 256,
+            colorDark: '#000000',
+            colorLight: '#ffffff',
+            correctLevel: QRCode.CorrectLevel.H
+        });
+    } else {
+        qrDiv.innerHTML = '<p style="color: var(--error);">QR Code library not loaded</p>';
+    }
+    
+    modal.classList.add('active');
+}
+
+function closeQRCode() {
+    const modal = document.getElementById('qrCodeModal');
+    if (modal) {
+        modal.classList.remove('active');
+    }
+}
+
+function copyQRCodeUrl() {
+    const urlDiv = document.getElementById('qrCodeUrl');
+    if (urlDiv) {
+        navigator.clipboard.writeText(urlDiv.textContent).then(() => {
+            showToast('URL copied to clipboard!', 'success');
+        });
+    }
+}
+
+// File upload handling
+function setupFileUpload() {
+    const chatInputContainer = document.getElementById('chatInputContainer');
+    const fileDropZone = document.getElementById('fileDropZone');
+    const chatInput = document.getElementById('chatInput');
+    
+    if (!chatInputContainer || !fileDropZone || !chatInput) return;
+    
+    // Drag and drop
+    chatInputContainer.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        fileDropZone.style.display = 'block';
+        fileDropZone.classList.add('dragover');
+    });
+    
+    chatInputContainer.addEventListener('dragleave', (e) => {
+        e.preventDefault();
+        if (!chatInputContainer.contains(e.relatedTarget)) {
+            fileDropZone.style.display = 'none';
+            fileDropZone.classList.remove('dragover');
+        }
+    });
+    
+    chatInputContainer.addEventListener('drop', (e) => {
+        e.preventDefault();
+        fileDropZone.style.display = 'none';
+        fileDropZone.classList.remove('dragover');
+        
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
+            handleFiles(files);
+        }
+    });
+    
+    // Click to show drop zone
+    fileDropZone.addEventListener('click', () => {
+        document.getElementById('fileInput').click();
+    });
+}
+
+function handleFileSelect(event) {
+    const files = event.target.files;
+    if (files.length > 0) {
+        handleFiles(files);
+    }
+}
+
+async function handleFiles(files) {
+    for (const file of files) {
+        if (file.size > 10 * 1024 * 1024) { // 10MB limit
+            showToast(`File ${file.name} is too large (max 10MB)`, 'error');
+            continue;
+        }
+        
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const content = e.target.result;
+            const fileInfo = `\n\n[File: ${file.name} (${(file.size / 1024).toFixed(2)} KB)]\n`;
+            
+            // Add file info to chat input
+            const chatInput = document.getElementById('chatInput');
+            if (chatInput) {
+                chatInput.value += fileInfo;
+                if (file.type.startsWith('text/')) {
+                    chatInput.value += `\nFile content:\n${content.substring(0, 5000)}${content.length > 5000 ? '... (truncated)' : ''}`;
+                }
+                updateWordCount();
+            }
+            
+            showToast(`File ${file.name} attached`, 'success');
+        };
+        
+        if (file.type.startsWith('text/')) {
+            reader.readAsText(file);
+        } else {
+            // For binary files, just add the file info
+            const chatInput = document.getElementById('chatInput');
+            if (chatInput) {
+                chatInput.value += `\n\n[File attached: ${file.name} (${(file.size / 1024).toFixed(2)} KB, type: ${file.type})]`;
+                updateWordCount();
+            }
+            showToast(`File ${file.name} attached (binary file)`, 'success');
+        }
+    }
+}
+
+// Set temperature preset
+function setTemperature(value) {
+    const tempSlider = document.getElementById('temperature');
+    const tempValue = document.getElementById('tempValue');
+    if (tempSlider && tempValue) {
+        tempSlider.value = value;
+        tempValue.textContent = value;
+        showToast(`Temperature set to ${value}`, 'success', 1500);
+    }
+}
+
+// Update word/character count
+function updateWordCount() {
+    const chatInput = document.getElementById('chatInput');
+    const charCount = document.getElementById('charCount');
+    const wordCountNum = document.getElementById('wordCountNum');
+    
+    if (!chatInput || !charCount || !wordCountNum) return;
+    
+    const text = chatInput.value;
+    const chars = text.length;
+    const words = text.trim() ? text.trim().split(/\s+/).length : 0;
+    
+    charCount.textContent = chars;
+    wordCountNum.textContent = words;
+}
+
+// Regenerate message
+async function regenerateMessage(messageId, originalText) {
+    if (!confirm('Regenerate this response? The current response will be replaced.')) {
+        return;
+    }
+    
+    // Find the user message that prompted this response
+    const messageDiv = document.getElementById(messageId);
+    if (!messageDiv) return;
+    
+    // Find previous user message
+    const chatMessages = document.getElementById('chatMessages');
+    const messages = Array.from(chatMessages.querySelectorAll('.message'));
+    const currentIndex = messages.indexOf(messageDiv);
+    
+    let userMessage = null;
+    for (let i = currentIndex - 1; i >= 0; i--) {
+        if (messages[i].classList.contains('user')) {
+            userMessage = messages[i].querySelector('.message-text').textContent;
+            break;
+        }
+    }
+    
+    if (!userMessage) {
+        showToast('Could not find the original prompt', 'error');
+        return;
+    }
+    
+    // Remove the current assistant message
+    messageDiv.remove();
+    
+    // Resend the message
+    const chatInput = document.getElementById('chatInput');
+    chatInput.value = userMessage;
+    await sendMessage();
+}
+
+// Delete message
+function deleteMessage(messageId) {
+    const messageDiv = document.getElementById(messageId);
+    if (!messageDiv) return;
+    
+    if (confirm('Delete this message?')) {
+        messageDiv.remove();
+        showToast('Message deleted', 'success');
+        
+        // If no messages left, show welcome message
+        const chatMessages = document.getElementById('chatMessages');
+        if (chatMessages.querySelectorAll('.message').length === 0) {
+            chatMessages.innerHTML = `
+                <div class="welcome-message">
+                    <h2>Welcome to LocalMind</h2>
+                    <p>Select a model and start chatting! Your conversations stay local and private.</p>
+                    <p style="margin-top: 1rem; font-size: 0.875rem; color: var(--text-secondary);">
+                        💡 Tip: Press <kbd>Ctrl+K</kbd> for new chat, <kbd>Ctrl+/</kbd> for shortcuts
+                    </p>
+                </div>
+            `;
+        }
+    }
+}
+
+// Toggle favorite model
+function toggleFavorite(modelName, button) {
+    const index = favoriteModels.indexOf(modelName);
+    if (index > -1) {
+        favoriteModels.splice(index, 1);
+        button.innerHTML = '☆';
+        button.title = 'Add to favorites';
+        showToast('Removed from favorites', 'success', 2000);
+    } else {
+        favoriteModels.push(modelName);
+        button.innerHTML = '⭐';
+        button.title = 'Remove from favorites';
+        showToast('Added to favorites', 'success', 2000);
+    }
+    localStorage.setItem('favoriteModels', JSON.stringify(favoriteModels));
+    updateFavoriteModelsList();
+    updateModelSelect();
+}
+
+// Update favorite models list
+function updateFavoriteModelsList() {
+    const listDiv = document.getElementById('favoriteModelsList');
+    if (!listDiv) return;
+    
+    if (favoriteModels.length === 0) {
+        listDiv.innerHTML = '<p style="color: var(--text-secondary); font-size: 0.875rem; text-align: center; padding: 0.5rem;">No favorite models</p>';
+        return;
+    }
+    
+    listDiv.innerHTML = '';
+    favoriteModels.forEach(modelName => {
+        const item = document.createElement('div');
+        item.className = 'favorite-model-item';
+        item.innerHTML = `
+            <span>⭐ ${modelName}</span>
+            <button class="btn-icon" onclick="selectFavoriteModel('${modelName}')" title="Use this model">→</button>
+        `;
+        listDiv.appendChild(item);
+    });
+}
+
+// Select favorite model
+function selectFavoriteModel(modelName) {
+    const modelSelect = document.getElementById('modelSelect');
+    if (modelSelect) {
+        modelSelect.value = modelName;
+        currentModel = modelName;
+        updateModelInfo();
+        showToast(`Switched to ${modelName}`, 'success');
+    }
+}
+
+// Toggle favorites view
+function toggleFavoritesView() {
+    const listDiv = document.getElementById('favoriteModelsList');
+    const btn = document.getElementById('showFavoritesBtn');
+    if (listDiv && btn) {
+        const isVisible = listDiv.style.display !== 'none';
+        listDiv.style.display = isVisible ? 'none' : 'block';
+        btn.innerHTML = isVisible ? '⭐' : '⭐';
+        if (!isVisible) {
+            updateFavoriteModelsList();
+        }
+    }
+}
+
+// Update model select with favorites
+function updateModelSelect() {
+    const modelSelect = document.getElementById('modelSelect');
+    if (!modelSelect) return;
+    
+    // Add favorites to the top of the select
+    const options = Array.from(modelSelect.options);
+    const favoriteOptions = options.filter(opt => favoriteModels.includes(opt.value));
+    const otherOptions = options.filter(opt => !favoriteModels.includes(opt.value) && opt.value);
+    
+    // Clear and rebuild
+    modelSelect.innerHTML = '<option value="">Select a model...</option>';
+    
+    // Add favorites group
+    if (favoriteOptions.length > 0) {
+        const favGroup = document.createElement('optgroup');
+        favGroup.label = '⭐ Favorites';
+        favoriteOptions.forEach(opt => {
+            const newOpt = opt.cloneNode(true);
+            newOpt.textContent = `⭐ ${newOpt.textContent}`;
+            favGroup.appendChild(newOpt);
+        });
+        modelSelect.appendChild(favGroup);
+    }
+    
+    // Add other models
+    if (otherOptions.length > 0) {
+        const otherGroup = document.createElement('optgroup');
+        otherGroup.label = 'All Models';
+        otherOptions.forEach(opt => otherGroup.appendChild(opt.cloneNode(true)));
+        modelSelect.appendChild(otherGroup);
+    }
+}
+
+// Export current chat
+async function exportCurrentChat() {
+    const chatMessages = document.getElementById('chatMessages');
+    const messages = chatMessages.querySelectorAll('.message');
+    
+    if (messages.length === 0) {
+        showToast('No messages to export', 'info');
+        return;
+    }
+    
+    let markdown = `# LocalMind Conversation\n\n`;
+    markdown += `**Model:** ${currentModel || 'Not selected'}\n`;
+    markdown += `**Date:** ${new Date().toLocaleString()}\n\n`;
+    markdown += `---\n\n`;
+    
+    messages.forEach(msg => {
+        const role = msg.classList.contains('user') ? 'User' : 'Assistant';
+        const textDiv = msg.querySelector('.message-text');
+        const text = textDiv ? textDiv.textContent : '';
+        markdown += `## ${role}\n\n${text}\n\n---\n\n`;
+    });
+    
+    // Download as markdown file
+    const blob = new Blob([markdown], { type: 'text/markdown' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `localmind_chat_${Date.now()}.md`;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+    
+    showToast('Chat exported successfully', 'success');
+}
+
+// Comparison Mode Functions
+async function sendComparisonMessage(prompt) {
+    if (comparisonModels.length < 2) {
+        showToast('Please select at least 2 models to compare', 'error');
+        return;
+    }
+    
+    if (comparisonModels.length > 5) {
+        showToast('Maximum 5 models can be compared at once', 'error');
+        return;
+    }
+    
+    const chatInput = document.getElementById('chatInput');
+    const sendButton = document.getElementById('sendButton');
+    
+    // Disable input
+    chatInput.disabled = true;
+    sendButton.disabled = true;
+    sendButton.innerHTML = '<span class="loading"></span> Comparing...';
+    
+    // Add user message
+    addMessage('user', prompt);
+    
+    // Clear input
+    chatInput.value = '';
+    chatInput.style.height = 'auto';
+    updateWordCount();
+    
+    // Get settings
+    const temperature = parseFloat(document.getElementById('temperature').value);
+    const systemPrompt = document.getElementById('systemPrompt').value || undefined;
+    
+    try {
+        const response = await fetch('/api/chat/compare', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                prompt: prompt,
+                models: comparisonModels,
+                system_prompt: systemPrompt,
+                temperature: temperature,
+                disable_safety_filters: unrestrictedMode
+            })
+        });
+        
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.message || 'Comparison failed');
+        }
+        
+        const data = await response.json();
+        
+        if (data.status === 'ok') {
+            // Display comparison results
+            displayComparisonResults(prompt, data.data);
+        } else {
+            throw new Error(data.message || 'Comparison failed');
+        }
+    } catch (error) {
+        console.error('Error in comparison:', error);
+        showToast(`Comparison failed: ${error.message}`, 'error', 5000);
+    } finally {
+        // Re-enable input
+        chatInput.disabled = false;
+        sendButton.disabled = false;
+        sendButton.innerHTML = '<span>Send</span>';
+        chatInput.focus();
+    }
+}
+
+function displayComparisonResults(prompt, data) {
+    const chatMessages = document.getElementById('chatMessages');
+    
+    // Create comparison container
+    const comparisonDiv = document.createElement('div');
+    comparisonDiv.className = 'comparison-container';
+    comparisonDiv.id = `comparison-${Date.now()}`;
+    
+    let html = `
+        <div class="comparison-header">
+            <h4>🔀 Model Comparison</h4>
+            <span style="font-size: 0.875rem; color: var(--text-secondary);">
+                ${data.successful}/${data.total_models} models responded
+            </span>
+        </div>
+        <div class="comparison-results">
+    `;
+    
+    // Sort by response time
+    const sortedResults = [...data.results].sort((a, b) => a.response_time - b.response_time);
+    
+    sortedResults.forEach((result, index) => {
+        const isFastest = index === 0;
+        html += `
+            <div class="comparison-item ${isFastest ? 'fastest' : ''}">
+                <div class="comparison-item-header">
+                    <div>
+                        <strong>${result.model}</strong>
+                        <span style="font-size: 0.75rem; color: var(--text-secondary); margin-left: 0.5rem;">
+                            ${result.backend}
+                        </span>
+                    </div>
+                    <div style="display: flex; gap: 0.5rem; align-items: center;">
+                        ${isFastest ? '<span style="color: var(--success); font-size: 0.75rem;">⚡ Fastest</span>' : ''}
+                        <span style="font-size: 0.75rem; color: var(--text-secondary);">
+                            ${result.response_time}s
+                        </span>
+                    </div>
+                </div>
+                <div class="comparison-item-content">
+                    ${renderMarkdown(result.response)}
+                </div>
+                ${result.metadata && Object.keys(result.metadata).length > 0 ? `
+                    <div class="comparison-item-metadata" style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 0.5rem; padding-top: 0.5rem; border-top: 1px solid var(--border-color);">
+                        ${result.metadata.prompt_tokens ? `Tokens: ${result.metadata.prompt_tokens} in / ${result.metadata.completion_tokens || 0} out` : ''}
+                    </div>
+                ` : ''}
+            </div>
+        `;
+    });
+    
+    // Show errors if any
+    if (data.errors && data.errors.length > 0) {
+        html += '<div class="comparison-errors">';
+        html += '<h5 style="color: var(--error); margin-bottom: 0.5rem;">Errors:</h5>';
+        data.errors.forEach(error => {
+            html += `
+                <div style="padding: 0.5rem; background: var(--surface-light); border-radius: 0.375rem; margin-bottom: 0.5rem;">
+                    <strong>${error.model}:</strong> ${error.error}
+                </div>
+            `;
+        });
+        html += '</div>';
+    }
+    
+    html += '</div></div>';
+    comparisonDiv.innerHTML = html;
+    
+    chatMessages.appendChild(comparisonDiv);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+// Ensemble Message Function
+async function sendEnsembleMessage(prompt) {
+    if (comparisonModels.length < 2) {
+        showToast('Please select at least 2 models for ensemble', 'error');
+        return;
+    }
+    
+    if (comparisonModels.length > 5) {
+        showToast('Maximum 5 models can be used in ensemble', 'error');
+        return;
+    }
+    
+    const chatInput = document.getElementById('chatInput');
+    const sendButton = document.getElementById('sendButton');
+    
+    // Disable input
+    chatInput.disabled = true;
+    sendButton.disabled = true;
+    sendButton.innerHTML = '<span class="loading"></span> Generating ensemble...';
+    
+    // Add user message
+    addMessage('user', prompt);
+    
+    // Clear input
+    chatInput.value = '';
+    chatInput.style.height = 'auto';
+    updateWordCount();
+    
+    // Get settings
+    const temperature = parseFloat(document.getElementById('temperature').value);
+    const systemPrompt = document.getElementById('systemPrompt').value || undefined;
+    const method = document.getElementById('ensembleMethod')?.value || 'majority_vote';
+    
+    try {
+        const response = await fetch('/api/chat/ensemble', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                prompt: prompt,
+                models: comparisonModels,
+                system_prompt: systemPrompt,
+                temperature: temperature,
+                method: method,
+                disable_safety_filters: unrestrictedMode
+            })
+        });
+        
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.message || 'Ensemble generation failed');
+        }
+        
+        const data = await response.json();
+        
+        if (data.status === 'ok') {
+            // Display ensemble result
+            displayEnsembleResult(prompt, data.data);
+        } else {
+            throw new Error(data.message || 'Ensemble generation failed');
+        }
+    } catch (error) {
+        console.error('Error in ensemble:', error);
+        showToast(`Ensemble failed: ${error.message}`, 'error', 5000);
+        addMessage('assistant', `**Error:** ${error.message}`, true);
+    } finally {
+        // Re-enable input
+        chatInput.disabled = false;
+        sendButton.disabled = false;
+        sendButton.innerHTML = '<span>Send</span>';
+        chatInput.focus();
+    }
+}
+
+function displayEnsembleResult(prompt, data) {
+    const chatMessages = document.getElementById('chatMessages');
+    
+    // Create ensemble container
+    const ensembleDiv = document.createElement('div');
+    ensembleDiv.className = 'ensemble-container';
+    ensembleDiv.id = `ensemble-${Date.now()}`;
+    
+    const methodNames = {
+        'majority_vote': 'Majority Vote',
+        'best': 'Best Response',
+        'longest': 'Longest Response',
+        'concatenate': 'Concatenated',
+        'average': 'All Responses'
+    };
+    
+    let html = `
+        <div class="ensemble-header">
+            <h4>🔀 Ensemble Response</h4>
+            <div style="display: flex; gap: 1rem; align-items: center; font-size: 0.875rem; color: var(--text-secondary); flex-wrap: wrap;">
+                <span>Method: <strong>${methodNames[data.method] || data.method}</strong></span>
+                <span>Models: ${data.models_used.join(', ')}</span>
+            </div>
+        </div>
+        <div class="ensemble-content">
+            ${renderMarkdown(data.response)}
+        </div>
+    `;
+    
+    // Show individual responses in collapsible section
+    if (data.individual_responses && data.individual_responses.length > 0) {
+        html += `
+            <div class="ensemble-individual" style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border-color);">
+                <details style="cursor: pointer;">
+                    <summary style="font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 0.5rem;">
+                        View Individual Responses (${data.individual_responses.length})
+                    </summary>
+                    <div style="display: flex; flex-direction: column; gap: 0.75rem; margin-top: 0.5rem;">
+        `;
+        
+        data.individual_responses.forEach(resp => {
+            html += `
+                <div style="padding: 0.75rem; background: var(--surface-light); border-radius: 0.375rem; border: 1px solid var(--border-color);">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem; font-size: 0.875rem;">
+                        <strong>${resp.model}</strong>
+                        <span style="color: var(--text-secondary);">${resp.response_time}s</span>
+                    </div>
+                    <div style="font-size: 0.875rem;">
+                        ${renderMarkdown(resp.response)}
+                    </div>
+                </div>
+            `;
+        });
+        
+        html += `
+                    </div>
+                </details>
+            </div>
+        `;
+    }
+    
+    html += '</div>';
+    ensembleDiv.innerHTML = html;
+    
+    chatMessages.appendChild(ensembleDiv);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+// Usage Dashboard Functions
+function showUsageDashboard() {
+    const modal = document.getElementById('usageDashboardModal');
+    if (modal) {
+        modal.style.display = 'flex';
+        loadUsageStatistics();
+        loadBudgetStatus();
+    }
+}
+
+function closeUsageDashboard() {
+    const modal = document.getElementById('usageDashboardModal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+}
+
+function showUsageTab(tabName) {
+    // Hide all tabs
+    document.querySelectorAll('.tab-content').forEach(tab => {
+        tab.classList.remove('active');
+    });
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    
+    // Show selected tab
+    const tabContent = document.getElementById(`usage${tabName.charAt(0).toUpperCase() + tabName.slice(1)}Tab`);
+    const tabBtn = event.target;
+    
+    if (tabContent) {
+        tabContent.classList.add('active');
+    }
+    if (tabBtn) {
+        tabBtn.classList.add('active');
+    }
+    
+    if (tabName === 'statistics') {
+        loadUsageStatistics();
+    } else if (tabName === 'budget') {
+        loadBudgetStatus();
+    } else if (tabName === 'resources') {
+        loadResourceMonitoring();
+    }
+}
+
+async function loadUsageStatistics() {
+    const content = document.getElementById('usageStatisticsContent');
+    if (!content) return;
+    
+    content.innerHTML = '<p>Loading statistics...</p>';
+    
+    try {
+        const days = document.getElementById('usageDaysFilter')?.value || '';
+        const url = `/api/usage/statistics${days ? `?days=${days}` : ''}`;
+        const response = await fetch(url);
+        const data = await response.json();
+        
+        if (data.status === 'ok') {
+            const stats = data.data;
+            renderUsageStatistics(stats);
+        } else {
+            content.innerHTML = `<p style="color: var(--error);">Error loading statistics: ${data.message}</p>`;
+        }
+    } catch (error) {
+        console.error('Failed to load usage statistics:', error);
+        content.innerHTML = `<p style="color: var(--error);">Failed to load statistics</p>`;
+    }
+}
+
+function renderUsageStatistics(stats) {
+    const content = document.getElementById('usageStatisticsContent');
+    if (!content) return;
+    
+    const formatCurrency = (amount) => `$${amount.toFixed(4)}`;
+    const formatNumber = (num) => num.toLocaleString();
+    
+    let html = `
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 2rem;">
+            <div style="background: var(--surface-light); padding: 1rem; border-radius: 0.5rem; border: 1px solid var(--border-color);">
+                <h4 style="margin: 0 0 0.5rem 0; color: var(--text-secondary); font-size: 0.875rem;">Total Calls</h4>
+                <p style="margin: 0; font-size: 1.5rem; font-weight: bold;">${formatNumber(stats.total_calls)}</p>
+            </div>
+            <div style="background: var(--surface-light); padding: 1rem; border-radius: 0.5rem; border: 1px solid var(--border-color);">
+                <h4 style="margin: 0 0 0.5rem 0; color: var(--text-secondary); font-size: 0.875rem;">Total Cost</h4>
+                <p style="margin: 0; font-size: 1.5rem; font-weight: bold; color: var(--primary-color);">${formatCurrency(stats.total_cost)}</p>
+            </div>
+            <div style="background: var(--surface-light); padding: 1rem; border-radius: 0.5rem; border: 1px solid var(--border-color);">
+                <h4 style="margin: 0 0 0.5rem 0; color: var(--text-secondary); font-size: 0.875rem;">Total Tokens</h4>
+                <p style="margin: 0; font-size: 1.5rem; font-weight: bold;">${formatNumber(stats.total_tokens)}</p>
+            </div>
+            <div style="background: var(--surface-light); padding: 1rem; border-radius: 0.5rem; border: 1px solid var(--border-color);">
+                <h4 style="margin: 0 0 0.5rem 0; color: var(--text-secondary); font-size: 0.875rem;">Avg Response Time</h4>
+                <p style="margin: 0; font-size: 1.5rem; font-weight: bold;">${stats.average_response_time.toFixed(2)}s</p>
+            </div>
+        </div>
+        
+        <div style="margin-bottom: 2rem;">
+            <h3>By Backend</h3>
+            <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+    `;
+    
+    for (const [backend, data] of Object.entries(stats.by_backend || {})) {
+        html += `
+            <div style="background: var(--surface-light); padding: 1rem; border-radius: 0.5rem; border: 1px solid var(--border-color);">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <strong>${backend}</strong>
+                        <div style="font-size: 0.875rem; color: var(--text-secondary); margin-top: 0.25rem;">
+                            ${formatNumber(data.calls)} calls • ${formatNumber(data.tokens)} tokens
+                        </div>
+                    </div>
+                    <div style="font-size: 1.25rem; font-weight: bold; color: var(--primary-color);">
+                        ${formatCurrency(data.cost)}
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+    
+    html += `
+            </div>
+        </div>
+        
+        <div>
+            <h3>By Model</h3>
+            <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+    `;
+    
+    for (const [model, data] of Object.entries(stats.by_model || {})) {
+        html += `
+            <div style="background: var(--surface-light); padding: 1rem; border-radius: 0.5rem; border: 1px solid var(--border-color);">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <strong>${model}</strong>
+                        <div style="font-size: 0.875rem; color: var(--text-secondary); margin-top: 0.25rem;">
+                            ${formatNumber(data.calls)} calls • ${formatNumber(data.tokens)} tokens
+                        </div>
+                    </div>
+                    <div style="font-size: 1.25rem; font-weight: bold; color: var(--primary-color);">
+                        ${formatCurrency(data.cost)}
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+    
+    html += `
+            </div>
+        </div>
+    `;
+    
+    content.innerHTML = html;
+}
+
+async function loadBudgetStatus() {
+    const content = document.getElementById('budgetStatusContent');
+    if (!content) return;
+    
+    content.innerHTML = '<p>Loading budget status...</p>';
+    
+    try {
+        const response = await fetch('/api/usage/budget');
+        const data = await response.json();
+        
+        if (data.status === 'ok') {
+            const budget = data.data;
+            renderBudgetStatus(budget);
+            
+            // Populate form fields
+            if (budget.daily.budget) {
+                document.getElementById('dailyBudget').value = budget.daily.budget;
+            }
+            if (budget.monthly.budget) {
+                document.getElementById('monthlyBudget').value = budget.monthly.budget;
+            }
+            document.getElementById('alertThreshold').value = (budget.alert_threshold * 100).toFixed(1);
+            document.getElementById('alertsEnabled').checked = budget.alerts_enabled;
+        } else {
+            content.innerHTML = `<p style="color: var(--error);">Error loading budget: ${data.message}</p>`;
+        }
+    } catch (error) {
+        console.error('Failed to load budget status:', error);
+        content.innerHTML = `<p style="color: var(--error);">Failed to load budget status</p>`;
+    }
+}
+
+function renderBudgetStatus(budget) {
+    const content = document.getElementById('budgetStatusContent');
+    if (!content) return;
+    
+    const formatCurrency = (amount) => `$${amount.toFixed(4)}`;
+    
+    let html = `
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem;">
+    `;
+    
+    // Daily budget
+    if (budget.daily.budget) {
+        const percentage = budget.daily.percentage || 0;
+        const isExceeded = budget.daily.exceeded;
+        html += `
+            <div style="background: var(--surface-light); padding: 1rem; border-radius: 0.5rem; border: 1px solid var(--border-color);">
+                <h4 style="margin: 0 0 0.5rem 0;">Daily Budget</h4>
+                <p style="margin: 0; font-size: 1.25rem; font-weight: bold; color: ${isExceeded ? 'var(--error)' : 'var(--primary-color)'};">
+                    ${formatCurrency(budget.daily.cost)} / ${formatCurrency(budget.daily.budget)}
+                </p>
+                <div style="margin-top: 0.5rem; background: var(--background); height: 8px; border-radius: 4px; overflow: hidden;">
+                    <div style="background: ${isExceeded ? 'var(--error)' : 'var(--primary-color)'}; height: 100%; width: ${Math.min(percentage, 100)}%;"></div>
+                </div>
+                <p style="margin: 0.25rem 0 0 0; font-size: 0.875rem; color: var(--text-secondary);">
+                    ${percentage.toFixed(1)}% used
+                    ${budget.daily.remaining !== null ? `• ${formatCurrency(budget.daily.remaining)} remaining` : ''}
+                </p>
+            </div>
+        `;
+    } else {
+        html += `
+            <div style="background: var(--surface-light); padding: 1rem; border-radius: 0.5rem; border: 1px solid var(--border-color);">
+                <h4 style="margin: 0 0 0.5rem 0;">Daily Budget</h4>
+                <p style="margin: 0; color: var(--text-secondary);">Not set</p>
+                <p style="margin: 0.25rem 0 0 0; font-size: 0.875rem; color: var(--text-secondary);">
+                    Today: ${formatCurrency(budget.daily.cost)}
+                </p>
+            </div>
+        `;
+    }
+    
+    // Monthly budget
+    if (budget.monthly.budget) {
+        const percentage = budget.monthly.percentage || 0;
+        const isExceeded = budget.monthly.exceeded;
+        html += `
+            <div style="background: var(--surface-light); padding: 1rem; border-radius: 0.5rem; border: 1px solid var(--border-color);">
+                <h4 style="margin: 0 0 0.5rem 0;">Monthly Budget</h4>
+                <p style="margin: 0; font-size: 1.25rem; font-weight: bold; color: ${isExceeded ? 'var(--error)' : 'var(--primary-color)'};">
+                    ${formatCurrency(budget.monthly.cost)} / ${formatCurrency(budget.monthly.budget)}
+                </p>
+                <div style="margin-top: 0.5rem; background: var(--background); height: 8px; border-radius: 4px; overflow: hidden;">
+                    <div style="background: ${isExceeded ? 'var(--error)' : 'var(--primary-color)'}; height: 100%; width: ${Math.min(percentage, 100)}%;"></div>
+                </div>
+                <p style="margin: 0.25rem 0 0 0; font-size: 0.875rem; color: var(--text-secondary);">
+                    ${percentage.toFixed(1)}% used
+                    ${budget.monthly.remaining !== null ? `• ${formatCurrency(budget.monthly.remaining)} remaining` : ''}
+                </p>
+            </div>
+        `;
+    } else {
+        html += `
+            <div style="background: var(--surface-light); padding: 1rem; border-radius: 0.5rem; border: 1px solid var(--border-color);">
+                <h4 style="margin: 0 0 0.5rem 0;">Monthly Budget</h4>
+                <p style="margin: 0; color: var(--text-secondary);">Not set</p>
+                <p style="margin: 0.25rem 0 0 0; font-size: 0.875rem; color: var(--text-secondary);">
+                    This month: ${formatCurrency(budget.monthly.cost)}
+                </p>
+            </div>
+        `;
+    }
+    
+    html += `</div>`;
+    
+    content.innerHTML = html;
+}
+
+async function saveBudgetSettings() {
+    const dailyBudget = document.getElementById('dailyBudget').value;
+    const monthlyBudget = document.getElementById('monthlyBudget').value;
+    const alertThreshold = document.getElementById('alertThreshold').value;
+    const alertsEnabled = document.getElementById('alertsEnabled').checked;
+    
+    try {
+        const response = await fetch('/api/usage/budget', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                daily_budget: dailyBudget ? parseFloat(dailyBudget) : null,
+                monthly_budget: monthlyBudget ? parseFloat(monthlyBudget) : null,
+                alert_threshold: parseFloat(alertThreshold) / 100,
+                alerts_enabled: alertsEnabled
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.status === 'ok') {
+            showToast('Budget settings saved successfully', 'success');
+            loadBudgetStatus();
+        } else {
+            showToast(data.message || 'Failed to save budget settings', 'error');
+        }
+    } catch (error) {
+        console.error('Failed to save budget settings:', error);
+        showToast('Failed to save budget settings', 'error');
+    }
+}
+
+// Resource Monitoring Functions
+let resourceAutoRefreshInterval = null;
+
+async function loadResourceMonitoring() {
+    const content = document.getElementById('resourcesContent');
+    if (!content) return;
+    
+    content.innerHTML = '<p>Loading resource information...</p>';
+    
+    try {
+        const response = await fetch('/api/resources?type=all');
+        const data = await response.json();
+        
+        if (data.status === 'ok') {
+            renderResourceMonitoring(data.data);
+        } else {
+            content.innerHTML = `<p style="color: var(--error);">Error loading resources: ${data.message}</p>`;
+        }
+    } catch (error) {
+        console.error('Failed to load resource monitoring:', error);
+        content.innerHTML = `<p style="color: var(--error);">Failed to load resource information</p>`;
+    }
+}
+
+function renderResourceMonitoring(resources) {
+    const content = document.getElementById('resourcesContent');
+    if (!content) return;
+    
+    const formatGB = (gb) => `${gb.toFixed(2)} GB`;
+    const formatPercent = (pct) => `${pct.toFixed(1)}%`;
+    
+    let html = '';
+    
+    // CPU
+    if (resources.cpu && resources.cpu.available) {
+        const cpu = resources.cpu;
+        html += `
+            <div style="margin-bottom: 2rem;">
+                <h3>CPU</h3>
+                <div style="background: var(--surface-light); padding: 1rem; border-radius: 0.5rem; border: 1px solid var(--border-color);">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                        <span><strong>Usage:</strong> ${formatPercent(cpu.usage_percent)}</span>
+                        <span>${cpu.cores} cores (${cpu.physical_cores} physical)</span>
+                    </div>
+                    <div style="background: var(--background); height: 20px; border-radius: 4px; overflow: hidden; margin-bottom: 0.5rem;">
+                        <div style="background: var(--primary-color); height: 100%; width: ${cpu.usage_percent}%; transition: width 0.3s;"></div>
+                    </div>
+                    ${cpu.frequency_mhz ? `<div style="font-size: 0.875rem; color: var(--text-secondary);">Frequency: ${cpu.frequency_mhz.toFixed(0)} MHz</div>` : ''}
+                </div>
+            </div>
+        `;
+    }
+    
+    // Memory
+    if (resources.memory && resources.memory.available) {
+        const mem = resources.memory;
+        html += `
+            <div style="margin-bottom: 2rem;">
+                <h3>Memory</h3>
+                <div style="background: var(--surface-light); padding: 1rem; border-radius: 0.5rem; border: 1px solid var(--border-color);">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                        <span><strong>Usage:</strong> ${formatPercent(mem.percent)}</span>
+                        <span>${formatGB(mem.used_gb)} / ${formatGB(mem.total_gb)}</span>
+                    </div>
+                    <div style="background: var(--background); height: 20px; border-radius: 4px; overflow: hidden; margin-bottom: 0.5rem;">
+                        <div style="background: var(--primary-color); height: 100%; width: ${mem.percent}%; transition: width 0.3s;"></div>
+                    </div>
+                    <div style="font-size: 0.875rem; color: var(--text-secondary);">
+                        Available: ${formatGB(mem.available_gb)}
+                        ${mem.swap_total_gb > 0 ? ` • Swap: ${formatGB(mem.swap_used_gb)} / ${formatGB(mem.swap_total_gb)} (${formatPercent(mem.swap_percent)})` : ''}
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+    
+    // GPU
+    if (resources.gpu && resources.gpu.available) {
+        html += `
+            <div style="margin-bottom: 2rem;">
+                <h3>GPU${resources.gpu.gpu_count > 1 ? 's' : ''} (${resources.gpu.gpu_count})</h3>
+        `;
+        
+        resources.gpu.gpus.forEach((gpu, index) => {
+            html += `
+                <div style="background: var(--surface-light); padding: 1rem; border-radius: 0.5rem; border: 1px solid var(--border-color); margin-bottom: 1rem;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                        <strong>${gpu.name}</strong>
+                        ${gpu.temperature_c !== null ? `<span>🌡️ ${gpu.temperature_c}°C</span>` : ''}
+                    </div>
+                    <div style="margin-bottom: 0.5rem;">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 0.25rem;">
+                            <span>GPU Utilization:</span>
+                            <span>${formatPercent(gpu.utilization_percent)}</span>
+                        </div>
+                        <div style="background: var(--background); height: 12px; border-radius: 4px; overflow: hidden;">
+                            <div style="background: var(--primary-color); height: 100%; width: ${gpu.utilization_percent}%; transition: width 0.3s;"></div>
+                        </div>
+                    </div>
+                    <div style="margin-bottom: 0.5rem;">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 0.25rem;">
+                            <span>Memory:</span>
+                            <span>${formatGB(gpu.memory_used_gb)} / ${formatGB(gpu.memory_total_gb)} (${formatPercent(gpu.memory_percent)})</span>
+                        </div>
+                        <div style="background: var(--background); height: 12px; border-radius: 4px; overflow: hidden;">
+                            <div style="background: var(--secondary-color); height: 100%; width: ${gpu.memory_percent}%; transition: width 0.3s;"></div>
+                        </div>
+                    </div>
+                    ${gpu.power_watts !== null ? `<div style="font-size: 0.875rem; color: var(--text-secondary);">Power: ${gpu.power_watts.toFixed(1)} W</div>` : ''}
+                </div>
+            `;
+        });
+        
+        html += `</div>`;
+    } else if (resources.gpu) {
+        html += `
+            <div style="margin-bottom: 2rem;">
+                <h3>GPU</h3>
+                <div style="background: var(--surface-light); padding: 1rem; border-radius: 0.5rem; border: 1px solid var(--border-color);">
+                    <p style="color: var(--text-secondary);">${resources.gpu.message || 'GPU monitoring not available'}</p>
+                </div>
+            </div>
+        `;
+    }
+    
+    // Disk
+    if (resources.disk && resources.disk.available) {
+        const disk = resources.disk;
+        html += `
+            <div style="margin-bottom: 2rem;">
+                <h3>Disk (${disk.path})</h3>
+                <div style="background: var(--surface-light); padding: 1rem; border-radius: 0.5rem; border: 1px solid var(--border-color);">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                        <span><strong>Usage:</strong> ${formatPercent(disk.percent)}</span>
+                        <span>${formatGB(disk.used_gb)} / ${formatGB(disk.total_gb)}</span>
+                    </div>
+                    <div style="background: var(--background); height: 20px; border-radius: 4px; overflow: hidden; margin-bottom: 0.5rem;">
+                        <div style="background: var(--primary-color); height: 100%; width: ${disk.percent}%; transition: width 0.3s;"></div>
+                    </div>
+                    <div style="font-size: 0.875rem; color: var(--text-secondary);">
+                        Free: ${formatGB(disk.free_gb)}
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+    
+    // System Info
+    html += `
+        <div style="margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid var(--border-color);">
+            <h3>System Information</h3>
+            <div style="background: var(--surface-light); padding: 1rem; border-radius: 0.5rem; border: 1px solid var(--border-color);">
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.5rem; font-size: 0.875rem;">
+                    <div><strong>Platform:</strong> ${resources.platform || 'Unknown'}</div>
+                    <div><strong>Architecture:</strong> ${resources.architecture || 'Unknown'}</div>
+                    ${resources.platform_release ? `<div><strong>Release:</strong> ${resources.platform_release}</div>` : ''}
+                    ${resources.processor ? `<div><strong>Processor:</strong> ${resources.processor}</div>` : ''}
+                </div>
+            </div>
+        </div>
+    `;
+    
+    content.innerHTML = html;
+}
+
+function toggleResourceAutoRefresh() {
+    const checkbox = document.getElementById('autoRefreshResources');
+    if (!checkbox) return;
+    
+    if (checkbox.checked) {
+        resourceAutoRefreshInterval = setInterval(loadResourceMonitoring, 5000);
+    } else {
+        if (resourceAutoRefreshInterval) {
+            clearInterval(resourceAutoRefreshInterval);
+            resourceAutoRefreshInterval = null;
+        }
+    }
+}
+
+// Close modal when clicking outside
+document.addEventListener('click', (e) => {
+    const usageModal = document.getElementById('usageDashboardModal');
+    if (usageModal && e.target === usageModal) {
+        closeUsageDashboard();
+        // Stop auto-refresh when closing
+        if (resourceAutoRefreshInterval) {
+            clearInterval(resourceAutoRefreshInterval);
+            resourceAutoRefreshInterval = null;
+        }
+    }
+});
 

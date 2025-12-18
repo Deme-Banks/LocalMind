@@ -138,6 +138,18 @@ class BaseBackend(ABC):
         """
         raise NotImplementedError("This backend does not support model downloads")
     
+    def delete_model(self, model: str) -> Dict[str, Any]:
+        """
+        Delete/remove a model (optional - not all backends support this)
+        
+        Args:
+            model: Model identifier to delete
+        
+        Returns:
+            Dictionary with deletion status and information
+        """
+        raise NotImplementedError("This backend does not support model deletion")
+    
     def get_backend_info(self) -> Dict[str, Any]:
         """
         Get information about this backend

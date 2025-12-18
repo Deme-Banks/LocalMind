@@ -112,6 +112,14 @@ class OpenAIBackend(BaseBackend):
             "temperature": temperature,
         }
         
+        # Disable content filtering if configured
+        disable_filters = kwargs.get("disable_safety_filters", self.config.get("disable_safety_filters", True))
+        if disable_filters:
+            # OpenAI doesn't have a direct way to disable moderation, but we can skip the moderation API
+            # For models that support it, we can set safety settings
+            if "moderation" not in payload:
+                payload["moderation"] = False
+        
         if max_tokens:
             payload["max_tokens"] = max_tokens
         
@@ -126,6 +134,15 @@ class OpenAIBackend(BaseBackend):
                 headers=headers,
                 timeout=self.timeout
             )
+            
+            # Handle rate limiting (429)
+            if response.status_code == 429:
+                retry_after = response.headers.get('Retry-After', '60')
+                error_msg = f"Rate limit exceeded. Please wait {retry_after} seconds before trying again."
+                if 'x-ratelimit-limit' in response.headers:
+                    error_msg += f" Limit: {response.headers.get('x-ratelimit-limit')} requests."
+                raise RuntimeError(error_msg)
+            
             response.raise_for_status()
             data = response.json()
             
@@ -138,6 +155,11 @@ class OpenAIBackend(BaseBackend):
                     "finish_reason": data["choices"][0].get("finish_reason"),
                 }
             )
+        except requests.exceptions.HTTPError as e:
+            if e.response and e.response.status_code == 429:
+                retry_after = e.response.headers.get('Retry-After', '60')
+                raise RuntimeError(f"Rate limit exceeded. Please wait {retry_after} seconds.")
+            raise RuntimeError(f"OpenAI generation failed: {e}")
         except Exception as e:
             raise RuntimeError(f"OpenAI generation failed: {e}")
     

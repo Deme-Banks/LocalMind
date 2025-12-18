@@ -66,7 +66,7 @@ class CohereBackend(BaseBackend):
             if response.status_code == 200:
                 data = response.json()
                 return [model["name"] for model in data.get("models", [])]
-        except:
+        except Exception:
             pass
         
         # Fallback to known models
@@ -120,6 +120,12 @@ class CohereBackend(BaseBackend):
                 headers=headers,
                 timeout=self.timeout
             )
+            
+            # Handle rate limiting (429)
+            if response.status_code == 429:
+                retry_after = response.headers.get('Retry-After', '60')
+                raise RuntimeError(f"Rate limit exceeded. Please wait {retry_after} seconds before trying again.")
+            
             response.raise_for_status()
             data = response.json()
             
@@ -132,6 +138,11 @@ class CohereBackend(BaseBackend):
                     "finish_reason": data["generations"][0].get("finish_reason"),
                 }
             )
+        except requests.exceptions.HTTPError as e:
+            if e.response and e.response.status_code == 429:
+                retry_after = e.response.headers.get('Retry-After', '60')
+                raise RuntimeError(f"Rate limit exceeded. Please wait {retry_after} seconds.")
+            raise RuntimeError(f"Cohere generation failed: {e}")
         except Exception as e:
             raise RuntimeError(f"Cohere generation failed: {e}")
     

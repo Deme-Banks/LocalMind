@@ -192,6 +192,47 @@ class OllamaBackend(BaseBackend):
                 "error": str(e)
             }
     
+    def delete_model(self, model: str) -> Dict[str, Any]:
+        """
+        Delete a model from Ollama.
+        
+        Args:
+            model: Model name to delete
+        
+        Returns:
+            Dictionary with deletion status and information
+        """
+        import subprocess
+        
+        try:
+            # Run ollama rm command
+            process = subprocess.Popen(
+                ["ollama", "rm", model],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            stdout, stderr = process.communicate()
+            
+            if process.returncode == 0:
+                return {
+                    "status": "ok",
+                    "message": f"Model '{model}' deleted successfully",
+                    "model": model
+                }
+            else:
+                return {
+                    "status": "error",
+                    "error": stderr or f"Failed to delete model '{model}'",
+                    "model": model
+                }
+        except Exception as e:
+            return {
+                "status": "error",
+                "error": f"Error deleting model: {str(e)}",
+                "model": model
+            }
+    
     def get_backend_info(self) -> Dict[str, Any]:
         """Get Ollama backend information"""
         info = super().get_backend_info()

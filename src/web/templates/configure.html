@@ -6,10 +6,23 @@
     <title>Configure APIs - LocalMind</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <style>
+        /* Override body overflow for configure page */
+        body {
+            overflow-y: auto !important;
+            height: auto !important;
+            min-height: 100vh;
+        }
+        
+        .container {
+            min-height: 100vh;
+            height: auto !important;
+        }
+        
         .config-container {
             max-width: 900px;
             margin: 2rem auto;
             padding: 2rem;
+            min-height: calc(100vh - 200px);
         }
         .provider-card {
             background: var(--surface);

@@ -56,7 +56,7 @@ class GoogleBackend(BaseBackend):
             if response.status_code == 200:
                 data = response.json()
                 return [model["name"].split("/")[-1] for model in data.get("models", [])]
-        except:
+        except Exception:
             pass
         
         # Fallback to known models
@@ -92,13 +92,37 @@ class GoogleBackend(BaseBackend):
             }
         }
         
+        # Disable safety filters for unrestricted mode
+        disable_filters = kwargs.get("disable_safety_filters", self.config.get("disable_safety_filters", True))
+        if disable_filters:
+            payload["safetySettings"] = [
+                {
+                    "category": "HARM_CATEGORY_HARASSMENT",
+                    "threshold": "BLOCK_NONE"
+                },
+                {
+                    "category": "HARM_CATEGORY_HATE_SPEECH",
+                    "threshold": "BLOCK_NONE"
+                },
+                {
+                    "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                    "threshold": "BLOCK_NONE"
+                },
+                {
+                    "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+                    "threshold": "BLOCK_NONE"
+                }
+            ]
+        
         if system_prompt:
             payload["systemInstruction"] = {"parts": [{"text": system_prompt}]}
         
         if max_tokens:
             payload["generationConfig"]["maxOutputTokens"] = max_tokens
         
-        payload.update(kwargs)
+        # Remove disable_safety_filters from kwargs before updating payload
+        kwargs_clean = {k: v for k, v in kwargs.items() if k != "disable_safety_filters"}
+        payload.update(kwargs_clean)
         
         try:
             session = getattr(self, 'session', None) or requests.Session()
@@ -107,6 +131,12 @@ class GoogleBackend(BaseBackend):
                 json=payload,
                 timeout=self.timeout
             )
+            
+            # Handle rate limiting (429)
+            if response.status_code == 429:
+                retry_after = response.headers.get('Retry-After', '60')
+                raise RuntimeError(f"Rate limit exceeded. Please wait {retry_after} seconds before trying again.")
+            
             response.raise_for_status()
             data = response.json()
             
@@ -121,6 +151,11 @@ class GoogleBackend(BaseBackend):
                     "finishReason": data["candidates"][0].get("finishReason"),
                 }
             )
+        except requests.exceptions.HTTPError as e:
+            if e.response and e.response.status_code == 429:
+                retry_after = e.response.headers.get('Retry-After', '60')
+                raise RuntimeError(f"Rate limit exceeded. Please wait {retry_after} seconds.")
+            raise RuntimeError(f"Google generation failed: {e}")
         except Exception as e:
             raise RuntimeError(f"Google generation failed: {e}")
     
@@ -150,13 +185,37 @@ class GoogleBackend(BaseBackend):
             }
         }
         
+        # Disable safety filters for unrestricted mode
+        disable_filters = kwargs.get("disable_safety_filters", self.config.get("disable_safety_filters", True))
+        if disable_filters:
+            payload["safetySettings"] = [
+                {
+                    "category": "HARM_CATEGORY_HARASSMENT",
+                    "threshold": "BLOCK_NONE"
+                },
+                {
+                    "category": "HARM_CATEGORY_HATE_SPEECH",
+                    "threshold": "BLOCK_NONE"
+                },
+                {
+                    "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                    "threshold": "BLOCK_NONE"
+                },
+                {
+                    "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+                    "threshold": "BLOCK_NONE"
+                }
+            ]
+        
         if system_prompt:
             payload["systemInstruction"] = {"parts": [{"text": system_prompt}]}
         
         if max_tokens:
             payload["generationConfig"]["maxOutputTokens"] = max_tokens
         
-        payload.update(kwargs)
+        # Remove disable_safety_filters from kwargs before updating payload
+        kwargs_clean = {k: v for k, v in kwargs.items() if k != "disable_safety_filters"}
+        payload.update(kwargs_clean)
         
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=self.timeout)) as response:

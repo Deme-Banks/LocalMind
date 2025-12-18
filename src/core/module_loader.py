@@ -14,11 +14,27 @@ logger = logging.getLogger(__name__)
 
 
 class ModuleLoader:
-    """Manages module loading and execution"""
+    """
+    Manages module loading and execution.
     
-    def __init__(self, modules_dir: Optional[Path] = None):
+    The ModuleLoader handles:
+    - Discovering and loading modules
+    - Registering modules for use
+    - Routing prompts to appropriate modules
+    - Managing module lifecycle
+    - Inter-module communication
+    
+    Modules extend LocalMind's capabilities with specialized functionality
+    like coding assistance, text generation, automation, etc.
+    
+    Attributes:
+        modules_dir: Directory containing module files
+        modules: Dictionary of loaded module instances
+    """
+    
+    def __init__(self, modules_dir: Optional[Path] = None) -> None:
         """
-        Initialize module loader
+        Initialize module loader.
         
         Args:
             modules_dir: Directory containing modules (default: src/modules)

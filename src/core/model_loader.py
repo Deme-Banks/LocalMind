@@ -21,6 +21,7 @@ from ..utils.config import ConfigManager, LocalMindConfig
 from .tool_registry import ToolRegistry
 from .tool_executor import ToolExecutor
 from .cache import ResponseCache
+from .model_manager import ModelManager
 
 
 logger = logging.getLogger(__name__)
@@ -42,7 +43,13 @@ class ModelLoader:
         self.tool_registry = ToolRegistry()
         self.tool_executor = ToolExecutor(self.tool_registry)
         self.cache = ResponseCache(ttl=self.config.cache_ttl if hasattr(self.config, 'cache_ttl') else 3600)
+        self.model_manager = ModelManager(
+            idle_timeout=getattr(self.config, 'model_idle_timeout', 300),
+            check_interval=getattr(self.config, 'model_check_interval', 60)
+        )
         self._initialize_backends()
+        # Start auto-unload thread
+        self.model_manager.start_auto_unload()
     
     def _initialize_backends(self) -> None:
         """Initialize available backends"""
@@ -227,6 +234,9 @@ class ModelLoader:
             if tools:
                 logger.info(f"🔧 Using {len(tools)} tools with {backend}")
         
+        # Register model usage for auto-unloading
+        self.model_manager.register_model_usage(model, backend)
+        
         # Generate with or without tools
         logger.info(f"🤖 Generating with {backend} / {model}")
         if tools and backend_instance.supports_tool_calling():
@@ -291,4 +301,57 @@ class ModelLoader:
             )
         
         return response
+    
+    def unload_model(self, model_name: str, backend_name: Optional[str] = None) -> bool:
+        """
+        Unload a model from memory
+        
+        Args:
+            model_name: Name of the model to unload
+            backend_name: Optional backend name
+            
+        Returns:
+            True if model was unloaded successfully
+        """
+        # Find backend if not provided
+        if not backend_name:
+            for backend_name_check, backend_instance in self.backends.items():
+                try:
+                    if model_name in backend_instance.list_models():
+                        backend_name = backend_name_check
+                        break
+                except Exception:
+                    continue
+        
+        if not backend_name:
+            logger.warning(f"Cannot find backend for model: {model_name}")
+            return False
+        
+        backend_instance = self.backends.get(backend_name)
+        if not backend_instance:
+            logger.warning(f"Backend not found: {backend_name}")
+            return False
+        
+        # Try to unload from backend
+        try:
+            if hasattr(backend_instance, 'unload_model'):
+                result = backend_instance.unload_model(model_name)
+                if result:
+                    self.model_manager.register_model_unloaded(model_name)
+                    logger.info(f"Unloaded model: {model_name} from {backend_name}")
+                    return True
+        except Exception as e:
+            logger.error(f"Error unloading model {model_name}: {e}", exc_info=True)
+        
+        # Mark as unloaded in manager anyway
+        self.model_manager.register_model_unloaded(model_name)
+        return True
+    
+    def get_model_status(self, model_name: str) -> Dict:
+        """Get status information for a model"""
+        return self.model_manager.get_model_status(model_name)
+    
+    def get_all_models_status(self) -> List[Dict]:
+        """Get status for all tracked models"""
+        return self.model_manager.get_all_models_status()
 

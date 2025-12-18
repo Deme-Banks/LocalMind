@@ -5,6 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LocalMind - Local AI Assistant</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <!-- Markdown rendering and code highlighting -->
+    <script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <!-- QR Code generation -->
+    <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 </head>
 <body>
     <div class="container">
@@ -20,6 +26,9 @@
                 </button>
                 <a href="/configure" class="btn btn-secondary" style="text-decoration: none; margin-right: 0.5rem;">Configure APIs</a>
                 <button class="btn btn-secondary" onclick="showModelManager()">Manage Models</button>
+                <button class="btn btn-secondary" onclick="showUsageDashboard()" title="Usage Statistics & Budget">📊 Usage</button>
+                <button class="btn btn-secondary" onclick="toggleComparisonMode()" id="comparisonModeBtn" title="Compare Multiple Models">🔀 Compare</button>
+                <button class="btn btn-secondary" onclick="showAbout()" title="About LocalMind">About</button>
                 <div class="status-indicator" id="statusIndicator">
                     <span class="status-dot"></span>
                     <span id="statusText">Checking...</span>
@@ -49,19 +58,126 @@
             <!-- Sidebar -->
             <aside class="sidebar">
                 <div class="sidebar-section">
-                    <h3>Model Selection</h3>
-                    <select id="modelSelect" class="model-select">
-                        <option value="">Loading models...</option>
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                        <h3 style="margin: 0;">Model Selection</h3>
+                        <button class="btn-icon" id="showFavoritesBtn" onclick="toggleFavoritesView()" title="Show favorites">
+                            ⭐
+                        </button>
+                    </div>
+                    <div class="model-select-container">
+                        <div class="model-select-display" id="modelSelectDisplay" onclick="toggleModelDropdown()">
+                            <span id="modelSelectText">Select a model...</span>
+                            <span class="model-select-arrow">▼</span>
+                        </div>
+                        <div class="model-dropdown" id="modelDropdown">
+                            <div class="model-dropdown-search">
+                                <input type="text" id="modelSearchInput" placeholder="Search models..." oninput="filterModelDropdown(this.value)">
+                            </div>
+                            <div class="model-dropdown-content" id="modelDropdownContent">
+                                <p style="padding: 1rem; color: var(--text-secondary);">Loading models...</p>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Hidden select for compatibility -->
+                    <select id="modelSelect" class="model-select-hidden" style="display: none;">
+                        <option value="">Select a model...</option>
                     </select>
                     <div class="model-info" id="modelInfo"></div>
+                    <div id="favoriteModelsList" class="favorite-models" style="display: none; margin-top: 0.5rem;"></div>
+                </div>
+
+                <!-- Comparison Mode Section -->
+                <div class="sidebar-section" id="comparisonModeSection" style="display: none;">
+                    <h3>🔀 Comparison Mode</h3>
+                    <p style="font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 1rem;">
+                        Compare responses from multiple models side-by-side
+                    </p>
+                    <div id="comparisonModelsList" style="margin-bottom: 1rem;">
+                        <p style="color: var(--text-secondary); font-size: 0.875rem;">No models selected</p>
+                    </div>
+                    <button class="btn btn-primary btn-small" onclick="addCurrentModelToComparison()" style="width: 100%;">
+                        + Add Current Model
+                    </button>
+                    <button class="btn btn-secondary btn-small" onclick="addComparisonModel()" style="width: 100%; margin-top: 0.5rem;">
+                        + Add Other Model
+                    </button>
+                    <button class="btn btn-secondary btn-small" onclick="clearComparisonModels()" style="width: 100%; margin-top: 0.5rem;">
+                        Clear All
+                    </button>
+                    <p id="comparisonModelCount" style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 0.5rem; text-align: center;">
+                        0/5 models
+                    </p>
+                    <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border-color);">
+                        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                            <input type="checkbox" id="ensembleMode" onchange="updateEnsembleMode()">
+                            <span style="font-size: 0.875rem;"><strong>Ensemble Mode</strong></span>
+                        </label>
+                        <p style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 0.25rem;">
+                            Combine responses instead of comparing
+                        </p>
+                        <select id="ensembleMethod" style="width: 100%; margin-top: 0.5rem; padding: 0.5rem; font-size: 0.875rem; border: 1px solid var(--border-color); border-radius: 0.375rem; background: var(--background); color: var(--text-primary);">
+                            <option value="majority_vote">Majority Vote</option>
+                            <option value="best">Best Response</option>
+                            <option value="longest">Longest Response</option>
+                            <option value="concatenate">Concatenate All</option>
+                            <option value="average">Show All (Average)</option>
+                        </select>
+                    </div>
                 </div>
 
                 <div class="sidebar-section">
                     <h3>Settings</h3>
                     <div class="setting-item">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                            <label for="autoRouting" style="margin: 0; cursor: pointer;">
+                                <strong>🎯 Auto Model Routing</strong>
+                                <span style="display: block; font-size: 0.75rem; color: var(--text-secondary); margin-top: 0.25rem;">
+                                    Automatically select best model for task
+                                </span>
+                            </label>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="autoRouting" onchange="toggleAutoRouting(this.checked)">
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="setting-item">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                            <label style="margin: 0;">
+                                <strong>🤖 Auto Model Selection</strong>
+                                <span style="display: block; font-size: 0.75rem; color: var(--text-secondary); margin-top: 0.25rem;">
+                                    Automatically selects best default model
+                                </span>
+                            </label>
+                            <button class="btn btn-secondary btn-small" onclick="autoSelectModel(true)" title="Select best default model">
+                                Select
+                            </button>
+                        </div>
+                    </div>
+                    <div class="setting-item">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                            <label for="unrestrictedMode" style="margin: 0; cursor: pointer;">
+                                <strong>🆓 Unrestricted Mode</strong>
+                                <span style="display: block; font-size: 0.75rem; color: var(--text-secondary); margin-top: 0.25rem;">
+                                    No content filtering
+                                </span>
+                            </label>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="unrestrictedMode" checked onchange="toggleUnrestrictedMode(this.checked)">
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="setting-item">
                         <label for="temperature">Temperature: <span id="tempValue">0.7</span></label>
                         <input type="range" id="temperature" min="0" max="2" step="0.1" value="0.7" 
-                               oninput="document.getElementById('tempValue').textContent = this.value">
+                               oninput="document.getElementById('tempValue').textContent = this.value; updateWordCount()">
+                        <div class="temp-presets">
+                            <button class="btn-temp-preset" onclick="setTemperature(0.0)" title="Deterministic">0.0</button>
+                            <button class="btn-temp-preset" onclick="setTemperature(0.7)" title="Balanced">0.7</button>
+                            <button class="btn-temp-preset" onclick="setTemperature(1.0)" title="Creative">1.0</button>
+                            <button class="btn-temp-preset" onclick="setTemperature(1.5)" title="Very Creative">1.5</button>
+                        </div>
                     </div>
                     <div class="setting-item">
                         <label>
@@ -84,12 +200,37 @@
                     <div class="welcome-message">
                         <h2>Welcome to LocalMind</h2>
                         <p>Select a model and start chatting! Your conversations stay local and private.</p>
+                        <p style="margin-top: 1rem; font-size: 0.875rem; color: var(--text-secondary);">
+                            💡 Tip: Press <kbd>Ctrl+K</kbd> for new chat, <kbd>Ctrl+/</kbd> for shortcuts
+                        </p>
                     </div>
                 </div>
-                <div class="chat-input-container">
+                <div class="chat-input-container" id="chatInputContainer">
+                    <div class="chat-actions">
+                        <button class="btn btn-secondary btn-small" id="clearChatBtn" onclick="clearChat()" title="Clear Chat (Ctrl+L)">
+                            🗑️ Clear
+                        </button>
+                        <button class="btn btn-secondary btn-small" id="exportChatBtn" onclick="exportCurrentChat()" title="Export Chat">
+                            💾 Export
+                        </button>
+                        <button class="btn btn-secondary btn-small" id="qrCodeBtn" onclick="showQRCode()" title="Show QR Code for Network Access">
+                            📱 QR Code
+                        </button>
+                        <div class="word-count" id="wordCount">
+                            <span id="charCount">0</span> chars, <span id="wordCountNum">0</span> words
+                        </div>
+                    </div>
+                    <div class="file-drop-zone" id="fileDropZone" style="display: none;">
+                        <p>📎 Drop files here or click to upload</p>
+                        <input type="file" id="fileInput" multiple style="display: none;" onchange="handleFileSelect(event)">
+                    </div>
                     <textarea id="chatInput" class="chat-input" 
-                              placeholder="Type your message here..." 
-                              rows="1"></textarea>
+                              placeholder="Type your message here... (Press Enter to send, Shift+Enter for new line) | Drag & drop files to attach" 
+                              rows="1"
+                              oninput="updateWordCount()"></textarea>
+                    <button class="btn btn-secondary" id="attachFileBtn" onclick="document.getElementById('fileInput').click()" title="Attach File">
+                        📎
+                    </button>
                     <button class="btn btn-primary" id="sendButton" onclick="sendMessage()">
                         <span>Send</span>
                     </button>
@@ -103,7 +244,12 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h2>Model Manager</h2>
-                <button class="modal-close" onclick="closeModelManager()">&times;</button>
+                <div style="display: flex; gap: 0.5rem; align-items: center;">
+                    <button class="btn btn-secondary btn-small" onclick="checkAllUpdates()" title="Check for updates for all installed models">
+                        🔄 Check All Updates
+                    </button>
+                    <button class="modal-close" onclick="closeModelManager()">&times;</button>
+                </div>
             </div>
             <div class="modal-body">
                 <div class="tabs">
@@ -148,6 +294,156 @@
                         <div class="progress-fill" id="progressFill"></div>
                     </div>
                     <p id="downloadMessage">Starting download...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- About Modal -->
+    <div id="aboutModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>About LocalMind</h2>
+                <button class="modal-close" onclick="closeAbout()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div style="line-height: 1.8;">
+                    <h3>🤖 LocalMind</h3>
+                    <p><strong>Privacy-Focused Local AI Assistant</strong></p>
+                    <p>LocalMind is an open-source AI assistant that runs entirely on your machine, ensuring complete privacy and control over your data.</p>
+                    
+                    <h4 style="margin-top: 1.5rem;">✨ Features</h4>
+                    <ul style="margin-left: 1.5rem; margin-top: 0.5rem;">
+                        <li>9 AI Backends: Ollama, OpenAI, Anthropic, Google, Mistral AI, Cohere, Groq, Transformers, GGUF</li>
+                        <li>Modular Architecture: Extensible plugin system</li>
+                        <li>Conversation Management: Save, load, search, and export chats</li>
+                        <li>Context Management: Smart context window handling</li>
+                        <li>Tool Calling: Function execution capabilities</li>
+                        <li>Performance: Caching, connection pooling, batching</li>
+                    </ul>
+                    
+                    <h4 style="margin-top: 1.5rem;">⌨️ Keyboard Shortcuts</h4>
+                    <ul style="margin-left: 1.5rem; margin-top: 0.5rem;">
+                        <li><kbd>Ctrl+K</kbd> - New conversation</li>
+                        <li><kbd>Ctrl+L</kbd> - Clear chat</li>
+                        <li><kbd>Ctrl+/</kbd> - Show shortcuts</li>
+                        <li><kbd>Enter</kbd> - Send message</li>
+                        <li><kbd>Shift+Enter</kbd> - New line</li>
+                    </ul>
+                    
+                    <h4 style="margin-top: 1.5rem;">💻 System Information</h4>
+                    <div id="systemInfo" style="margin-top: 0.5rem; font-size: 0.875rem; color: var(--text-secondary);">
+                        <p>Loading system information...</p>
+                    </div>
+                    
+                    <h4 style="margin-top: 1.5rem;">📝 Changelog</h4>
+                    <div id="changelogContent" style="margin-top: 0.5rem; max-height: 300px; overflow-y: auto; font-size: 0.875rem; padding: 0.75rem; background: var(--surface-light); border-radius: 0.5rem; border: 1px solid var(--border-color);">
+                        <p style="color: var(--text-secondary);">Loading changelog...</p>
+                    </div>
+                    
+                    <h4 style="margin-top: 1.5rem;">🔗 Links</h4>
+                    <p style="margin-top: 0.5rem;">
+                        <a href="https://github.com/Deme-Banks/LocalMind" target="_blank" style="color: var(--primary-color);">GitHub Repository</a>
+                    </p>
+                    
+                    <p style="margin-top: 1.5rem; color: var(--text-secondary); font-size: 0.875rem;">
+                        Version 1.0.0 | Made with ❤️ for privacy-conscious users
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div id="toastContainer" class="toast-container"></div>
+
+    <!-- QR Code Modal -->
+    <div id="qrCodeModal" class="modal">
+        <div class="modal-content small">
+            <div class="modal-header">
+                <h2>Network Access QR Code</h2>
+                <button class="modal-close" onclick="closeQRCode()">&times;</button>
+            </div>
+            <div class="modal-body" style="text-align: center;">
+                <div id="qrcode" style="margin: 1rem auto;"></div>
+                <p id="qrCodeUrl" style="margin-top: 1rem; word-break: break-all; color: var(--text-secondary); font-size: 0.875rem;"></p>
+                <button class="btn btn-primary" onclick="copyQRCodeUrl()" style="margin-top: 1rem;">Copy URL</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Usage Dashboard Modal -->
+    <div id="usageDashboardModal" class="modal">
+        <div class="modal-content" style="max-width: 900px;">
+            <div class="modal-header">
+                <h2>📊 Usage Statistics & Budget</h2>
+                <button class="modal-close" onclick="closeUsageDashboard()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="tabs">
+                    <button class="tab-btn active" onclick="showUsageTab('statistics')">Statistics</button>
+                    <button class="tab-btn" onclick="showUsageTab('budget')">Budget</button>
+                    <button class="tab-btn" onclick="showUsageTab('resources')">Resources</button>
+                </div>
+
+                <!-- Statistics Tab -->
+                <div id="usageStatisticsTab" class="tab-content active">
+                    <div style="margin-bottom: 1rem;">
+                        <label>Filter by days:</label>
+                        <select id="usageDaysFilter" onchange="loadUsageStatistics()" style="margin-left: 0.5rem; padding: 0.25rem 0.5rem;">
+                            <option value="">All time</option>
+                            <option value="7">Last 7 days</option>
+                            <option value="30">Last 30 days</option>
+                            <option value="90">Last 90 days</option>
+                        </select>
+                    </div>
+                    <div id="usageStatisticsContent">
+                        <p>Loading statistics...</p>
+                    </div>
+                </div>
+
+                <!-- Budget Tab -->
+                <div id="usageBudgetTab" class="tab-content">
+                    <div id="budgetStatusContent" style="margin-bottom: 2rem;">
+                        <p>Loading budget status...</p>
+                    </div>
+                    <div style="border-top: 1px solid var(--border-color); padding-top: 1.5rem;">
+                        <h3 style="margin-bottom: 1rem;">Budget Settings</h3>
+                        <div style="display: flex; flex-direction: column; gap: 1rem;">
+                            <div>
+                                <label>Daily Budget ($):</label>
+                                <input type="number" id="dailyBudget" step="0.01" min="0" placeholder="No limit" style="margin-left: 0.5rem; padding: 0.5rem; width: 200px;">
+                            </div>
+                            <div>
+                                <label>Monthly Budget ($):</label>
+                                <input type="number" id="monthlyBudget" step="0.01" min="0" placeholder="No limit" style="margin-left: 0.5rem; padding: 0.5rem; width: 200px;">
+                            </div>
+                            <div>
+                                <label>Alert Threshold (%):</label>
+                                <input type="number" id="alertThreshold" step="0.1" min="0" max="100" value="80" style="margin-left: 0.5rem; padding: 0.5rem; width: 200px;">
+                                <span style="color: var(--text-secondary); font-size: 0.875rem; margin-left: 0.5rem;">Alert when budget reaches this percentage</span>
+                            </div>
+                            <div>
+                                <label>
+                                    <input type="checkbox" id="alertsEnabled" checked> Enable budget alerts
+                                </label>
+                            </div>
+                            <button class="btn btn-primary" onclick="saveBudgetSettings()">Save Budget Settings</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Resources Tab -->
+                <div id="usageResourcesTab" class="tab-content">
+                    <div style="margin-bottom: 1rem;">
+                        <button class="btn btn-secondary btn-small" onclick="loadResourceMonitoring()" style="margin-right: 0.5rem;">🔄 Refresh</button>
+                        <label>
+                            <input type="checkbox" id="autoRefreshResources" onchange="toggleResourceAutoRefresh()"> Auto-refresh (5s)
+                        </label>
+                    </div>
+                    <div id="resourcesContent">
+                        <p>Loading resource information...</p>
+                    </div>
                 </div>
             </div>
         </div>

@@ -7,6 +7,7 @@ import requests
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 import logging
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +65,7 @@ class ModelRegistry:
         if backend_instance and hasattr(backend_instance, 'list_models'):
             try:
                 installed = backend_instance.list_models()
-            except:
+            except Exception:
                 pass
         
         # Get models for this backend from registry
@@ -280,3 +281,194 @@ class ModelRegistry:
         for backend_models in self.registry.get("backends", {}).values():
             all_models.extend(backend_models.get("models", {}).keys())
         return all_models
+    
+    def check_model_updates(
+        self, 
+        backend_name: str, 
+        model_name: str, 
+        backend_instance: Any = None
+    ) -> Dict[str, Any]:
+        """
+        Check if a model has updates available
+        
+        Args:
+            backend_name: Name of the backend
+            model_name: Name of the model to check
+            backend_instance: Optional backend instance for checking
+            
+        Returns:
+            Dictionary with update information:
+            {
+                "has_update": bool,
+                "current_version": str,
+                "latest_version": str,
+                "update_available": bool,
+                "last_checked": str,
+                "error": Optional[str]
+            }
+        """
+        result = {
+            "has_update": False,
+            "current_version": None,
+            "latest_version": None,
+            "update_available": False,
+            "last_checked": datetime.now().isoformat(),
+            "error": None
+        }
+        
+        try:
+            if backend_name == "ollama":
+                result = self._check_ollama_update(model_name, backend_instance)
+            elif backend_name == "transformers":
+                result = self._check_transformers_update(model_name)
+            elif backend_name in ["openai", "anthropic", "google", "mistral-ai", "cohere", "groq"]:
+                result = self._check_api_model_update(backend_name, model_name)
+            else:
+                result["error"] = f"Update checking not supported for backend: {backend_name}"
+        except Exception as e:
+            logger.error(f"Error checking updates for {backend_name}/{model_name}: {e}", exc_info=True)
+            result["error"] = str(e)
+        
+        # Store last checked time
+        self._update_last_checked(backend_name, model_name, result["last_checked"])
+        
+        return result
+    
+    def _check_ollama_update(self, model_name: str, backend_instance: Any = None) -> Dict[str, Any]:
+        """Check for Ollama model updates"""
+        result = {
+            "has_update": False,
+            "current_version": None,
+            "latest_version": None,
+            "update_available": False,
+            "last_checked": datetime.now().isoformat(),
+            "error": None
+        }
+        
+        try:
+            # Ollama models are automatically updated when pulled
+            # We can check if there's a newer version by attempting to pull
+            # For now, we'll indicate that updates are available via pull
+            if backend_instance and hasattr(backend_instance, 'list_models'):
+                installed_models = backend_instance.list_models()
+                if model_name in installed_models:
+                    result["current_version"] = "installed"
+                    result["latest_version"] = "latest"
+                    # Ollama automatically uses latest when model is pulled
+                    # User can pull again to update
+                    result["update_available"] = True
+                    result["has_update"] = True
+        except Exception as e:
+            result["error"] = f"Error checking Ollama update: {e}"
+        
+        return result
+    
+    def _check_transformers_update(self, model_name: str) -> Dict[str, Any]:
+        """Check for HuggingFace Transformers model updates"""
+        result = {
+            "has_update": False,
+            "current_version": None,
+            "latest_version": None,
+            "update_available": False,
+            "last_checked": datetime.now().isoformat(),
+            "error": None
+        }
+        
+        try:
+            # Extract model ID from name (could be "model-name" or "org/model-name")
+            model_id = model_name
+            if "/" not in model_id:
+                # Try to find the full model ID
+                model_id = f"microsoft/{model_id}" if model_id.startswith("DialoGPT") else model_id
+            
+            # Check HuggingFace Hub for latest version
+            api_url = f"https://huggingface.co/api/models/{model_id}"
+            response = requests.get(api_url, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                result["latest_version"] = data.get("modelId", model_id)
+                result["current_version"] = model_name
+                # For Transformers, updates are available if model exists on Hub
+                result["update_available"] = True
+                result["has_update"] = True
+            else:
+                result["error"] = f"Model not found on HuggingFace Hub: {model_id}"
+        except Exception as e:
+            result["error"] = f"Error checking Transformers update: {e}"
+        
+        return result
+    
+    def _check_api_model_update(self, backend_name: str, model_name: str) -> Dict[str, Any]:
+        """Check for API model updates (most API models are always latest)"""
+        result = {
+            "has_update": False,
+            "current_version": model_name,
+            "latest_version": model_name,
+            "update_available": False,
+            "last_checked": datetime.now().isoformat(),
+            "error": None
+        }
+        
+        # API models are typically always up-to-date
+        # We can check if there are newer model versions available
+        try:
+            # For API models, check if there's a newer version in the registry
+            backend_models = self._get_backend_models(backend_name)
+            model_info = next((m for m in backend_models if m["name"] == model_name), None)
+            
+            if model_info:
+                # Check if there are newer models with similar names
+                # (e.g., gpt-4-turbo vs gpt-4-turbo-preview)
+                similar_models = [m for m in backend_models if model_name.split("-")[0] in m["name"]]
+                if len(similar_models) > 1:
+                    # Check if any have "latest" tag
+                    latest_models = [m for m in similar_models if "latest" in m.get("tags", [])]
+                    if latest_models and latest_models[0]["name"] != model_name:
+                        result["latest_version"] = latest_models[0]["name"]
+                        result["update_available"] = True
+                        result["has_update"] = True
+        except Exception as e:
+            result["error"] = f"Error checking API model update: {e}"
+        
+        return result
+    
+    def _update_last_checked(self, backend_name: str, model_name: str, timestamp: str):
+        """Update the last checked timestamp for a model"""
+        if "backends" not in self.registry:
+            self.registry["backends"] = {}
+        if backend_name not in self.registry["backends"]:
+            self.registry["backends"][backend_name] = {}
+        if "models" not in self.registry["backends"][backend_name]:
+            self.registry["backends"][backend_name]["models"] = {}
+        if model_name not in self.registry["backends"][backend_name]["models"]:
+            self.registry["backends"][backend_name]["models"][model_name] = {}
+        
+        self.registry["backends"][backend_name]["models"][model_name]["last_checked"] = timestamp
+        self._save_registry()
+    
+    def check_all_updates(
+        self, 
+        backend_name: str, 
+        installed_models: List[str], 
+        backend_instance: Any = None
+    ) -> Dict[str, Dict[str, Any]]:
+        """
+        Check updates for all installed models in a backend
+        
+        Args:
+            backend_name: Name of the backend
+            installed_models: List of installed model names
+            backend_instance: Optional backend instance
+            
+        Returns:
+            Dictionary mapping model names to their update information
+        """
+        updates = {}
+        for model_name in installed_models:
+            updates[model_name] = self.check_model_updates(
+                backend_name, 
+                model_name, 
+                backend_instance
+            )
+        return updates

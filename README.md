@@ -2,10 +2,21 @@
 
 A lightweight, privacy-focused local AI that runs fully on your computer. Supports multiple model backends, customizable modules, and offline tools for automation, coding help, and text generation. No cloud, no tracking—full control over your AI.
 
+## 📚 Documentation
+
+- **[API Documentation](API_DOCUMENTATION.md)** - Complete REST API reference
+- **[Troubleshooting Guide](TROUBLESHOOTING.md)** - Common issues and solutions
+- **[Installation Guide](INSTALL_STEPS.md)** - Detailed setup instructions
+- **[Quick Start](QUICKSTART.md)** - Get started in 5 minutes
+- **[Development Plan](DEVELOPMENT_PLAN.md)** - Project roadmap and architecture
+- **[Contributing Guide](CONTRIBUTING.md)** - How to contribute to LocalMind
+- **[Code Examples](CODE_EXAMPLES.md)** - Practical usage examples
+
 ## Features
 
 - 🏠 **Fully Local**: Runs entirely on your machine, no cloud dependencies
 - 🔒 **Privacy-Focused**: No tracking, no data collection, complete control
+- 🆓 **Unrestricted Mode**: Complete freedom - no content filtering by default
 - 🤖 **Multiple Model Backends**: Support for various AI model formats
 - 🌐 **Web Interface**: Professional web UI accessible from any device
 - 📥 **Model Management**: Download and manage AI models from the web interface
@@ -104,7 +115,31 @@ LocalMind/
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+## Status
+
+✅ **Production Ready** - All core features are complete and tested. The project is ready for use!
+
+### Test Coverage
+
+Run the test suite:
+```bash
+pytest
+```
+
+See [tests/README.md](tests/README.md) for more information about testing.
+
+## Documentation
+
+- **[API Documentation](API_DOCUMENTATION.md)** - Complete REST API reference
+- **[Troubleshooting Guide](TROUBLESHOOTING.md)** - Common issues and solutions
+- **[Installation Guide](INSTALL_STEPS.md)** - Detailed setup instructions
+- **[Quick Start](QUICKSTART.md)** - Get started in 5 minutes
+- **[Development Plan](DEVELOPMENT_PLAN.md)** - Project roadmap and architecture
+- **[Contributing Guide](CONTRIBUTING.md)** - How to contribute to LocalMind
+- **[Code Examples](CODE_EXAMPLES.md)** - Practical usage examples
+- **[Project Summary](PROJECT_SUMMARY.md)** - Complete project overview
 
 ## License
 

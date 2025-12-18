@@ -36,6 +36,9 @@ class LocalMindConfig(BaseModel):
     modules: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
     storage_path: Path = Field(default_factory=lambda: Path.home() / ".localmind")
     log_level: str = Field(default="INFO")
+    # Content filtering settings
+    unrestricted_mode: bool = Field(default=True, description="Disable all content filtering for complete freedom")
+    disable_safety_filters: bool = Field(default=True, description="Disable safety filters on API backends")
     
     class Config:
         json_encoders = {
@@ -160,7 +163,7 @@ class ConfigManager:
                         import shutil
                         shutil.copy2(self.config_path, backup_path)
                         print(f"   Backed up old config to: {backup_path}")
-                    except:
+                    except Exception:
                         pass
                 self.config = self._create_default_config()
                 self.save_config()
