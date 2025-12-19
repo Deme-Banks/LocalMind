@@ -1,0 +1,957 @@
+openapi: 3.0.3
+info:
+  title: LocalMind API
+  description: |
+    REST API for LocalMind - A privacy-focused local AI platform supporting multiple model backends.
+    
+    Features:
+    - Multiple AI model backends (Ollama, OpenAI, Anthropic, Google, Mistral, Cohere, Groq)
+    - Model comparison and ensemble responses
+    - Automatic model routing based on task type
+    - Conversation management with context
+    - Usage tracking and cost monitoring
+    - Resource monitoring and cleanup
+  version: 1.0.0
+  contact:
+    name: LocalMind Support
+    url: https://github.com/Deme-Banks/LocalMind
+
+servers:
+  - url: http://localhost:5000
+    description: Local development server
+  - url: http://127.0.0.1:5000
+    description: Local development server (alternative)
+
+tags:
+  - name: System
+    description: System status and information
+  - name: Models
+    description: Model management and selection
+  - name: Chat
+    description: Chat and conversation endpoints
+  - name: Conversations
+    description: Conversation history management
+  - name: Usage
+    description: Usage statistics and tracking
+  - name: Resources
+    description: Resource monitoring and cleanup
+  - name: Configuration
+    description: API configuration management
+
+paths:
+  /api/status:
+    get:
+      tags:
+        - System
+      summary: Get system status
+      description: Returns system status including available backends, modules, and system information
+      responses:
+        '200':
+          description: System status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+  
+  /api/models:
+    get:
+      tags:
+        - Models
+      summary: List available models
+      description: Returns all available models organized by backend
+      responses:
+        '200':
+          description: List of available models
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelsResponse'
+  
+  /api/models/auto-select:
+    get:
+      tags:
+        - Models
+      summary: Auto-select best default model
+      description: Automatically selects the best default model based on availability and preferences
+      responses:
+        '200':
+          description: Selected model information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutoSelectResponse'
+  
+  /api/models/suggest:
+    post:
+      tags:
+        - Models
+      summary: Suggest model based on context
+      description: Suggests the best model based on conversation context and preferences
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ModelSuggestionRequest'
+      responses:
+        '200':
+          description: Model suggestion
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelSuggestionResponse'
+  
+  /api/models/check-update:
+    post:
+      tags:
+        - Models
+      summary: Check for model updates
+      description: Checks if a specific model has updates available
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                model:
+                  type: string
+                  description: Model name to check
+                backend:
+                  type: string
+                  description: Backend name
+      responses:
+        '200':
+          description: Update check result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateCheckResponse'
+  
+  /api/models/status:
+    get:
+      tags:
+        - Models
+      summary: Get model status
+      description: Returns status of loaded models including idle time
+      responses:
+        '200':
+          description: Model status information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelStatusResponse'
+  
+  /api/models/unload:
+    post:
+      tags:
+        - Models
+      summary: Unload a model
+      description: Manually unloads a specific model from memory
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                model:
+                  type: string
+                  description: Model name to unload
+      responses:
+        '200':
+          description: Unload result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+  
+  /api/chat:
+    post:
+      tags:
+        - Chat
+      summary: Send chat message
+      description: Sends a chat message to the selected model and returns the response
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatRequest'
+      responses:
+        '200':
+          description: Chat response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  
+  /api/chat/stream:
+    post:
+      tags:
+        - Chat
+      summary: Stream chat response
+      description: Sends a chat message and streams the response in real-time
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatRequest'
+      responses:
+        '200':
+          description: Streaming response (Server-Sent Events)
+          content:
+            text/event-stream:
+              schema:
+                type: string
+  
+  /api/chat/compare:
+    post:
+      tags:
+        - Chat
+      summary: Compare multiple models
+      description: Compares responses from multiple models side-by-side
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompareRequest'
+      responses:
+        '200':
+          description: Comparison results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompareResponse'
+  
+  /api/chat/ensemble:
+    post:
+      tags:
+        - Chat
+      summary: Generate ensemble response
+      description: Combines responses from multiple models using specified method
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnsembleRequest'
+      responses:
+        '200':
+          description: Ensemble response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnsembleResponse'
+  
+  /api/chat/route:
+    post:
+      tags:
+        - Chat
+      summary: Route to best model
+      description: Routes a prompt to the best model based on task type detection
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RouteRequest'
+      responses:
+        '200':
+          description: Routing recommendation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RouteResponse'
+  
+  /api/tasks/types:
+    get:
+      tags:
+        - Chat
+      summary: Get supported task types
+      description: Returns list of all supported task types for model routing
+      responses:
+        '200':
+          description: List of task types
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskTypesResponse'
+  
+  /api/conversations:
+    get:
+      tags:
+        - Conversations
+      summary: List conversations
+      description: Returns list of all saved conversations
+      responses:
+        '200':
+          description: List of conversations
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationsListResponse'
+    post:
+      tags:
+        - Conversations
+      summary: Create new conversation
+      description: Creates a new conversation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateConversationRequest'
+      responses:
+        '200':
+          description: Created conversation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationResponse'
+  
+  /api/conversations/{conversation_id}:
+    get:
+      tags:
+        - Conversations
+      summary: Get conversation
+      description: Returns a specific conversation by ID
+      parameters:
+        - name: conversation_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Conversation details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationResponse'
+    delete:
+      tags:
+        - Conversations
+      summary: Delete conversation
+      description: Deletes a specific conversation
+      parameters:
+        - name: conversation_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Deletion result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+  
+  /api/usage/statistics:
+    get:
+      tags:
+        - Usage
+      summary: Get usage statistics
+      description: Returns usage statistics including API calls, tokens, costs, and response times
+      parameters:
+        - name: days
+          in: query
+          schema:
+            type: integer
+            default: 7
+          description: Number of days to include in statistics
+      responses:
+        '200':
+          description: Usage statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UsageStatisticsResponse'
+  
+  /api/usage/budget:
+    get:
+      tags:
+        - Usage
+      summary: Get budget status
+      description: Returns current budget settings and status
+      responses:
+        '200':
+          description: Budget status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BudgetResponse'
+    post:
+      tags:
+        - Usage
+      summary: Update budget settings
+      description: Updates budget settings including daily/monthly limits and alert thresholds
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BudgetRequest'
+      responses:
+        '200':
+          description: Updated budget settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BudgetResponse'
+  
+  /api/resources:
+    get:
+      tags:
+        - Resources
+      summary: Get resource usage
+      description: Returns current system resource usage (CPU, memory, GPU, disk)
+      responses:
+        '200':
+          description: Resource usage information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceUsageResponse'
+  
+  /api/cleanup/stats:
+    get:
+      tags:
+        - Resources
+      summary: Get cleanup statistics
+      description: Returns statistics about cleanable resources (cache, conversations, temp files, logs)
+      responses:
+        '200':
+          description: Cleanup statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleanupStatsResponse'
+  
+  /api/cleanup/run:
+    post:
+      tags:
+        - Resources
+      summary: Run resource cleanup
+      description: Runs cleanup operations to free disk space
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CleanupRequest'
+      responses:
+        '200':
+          description: Cleanup results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleanupResponse'
+
+components:
+  schemas:
+    StatusResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+        backends:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              available:
+                type: boolean
+              models:
+                type: array
+                items:
+                  type: string
+        modules:
+          type: array
+          items:
+            type: object
+    
+    ModelsResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+        models:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+    
+    AutoSelectResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+        data:
+          type: object
+          properties:
+            selected_model:
+              type: string
+              example: llama3
+            available_models_count:
+              type: integer
+            method:
+              type: string
+              example: auto_select
+    
+    ModelSuggestionRequest:
+      type: object
+      properties:
+        conversation_history:
+          type: array
+          items:
+            type: string
+        current_model:
+          type: string
+        preferences:
+          type: object
+          properties:
+            favorites:
+              type: array
+              items:
+                type: string
+            most_used:
+              type: array
+              items:
+                type: string
+    
+    ModelSuggestionResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+        data:
+          type: object
+          properties:
+            suggested_model:
+              type: string
+            reason:
+              type: string
+            method:
+              type: string
+    
+    UpdateCheckResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+        data:
+          type: object
+          properties:
+            has_update:
+              type: boolean
+            current_version:
+              type: string
+            latest_version:
+              type: string
+    
+    ModelStatusResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+        data:
+          type: object
+          properties:
+            loaded_models:
+              type: array
+              items:
+                type: object
+                properties:
+                  model:
+                    type: string
+                  idle_time:
+                    type: number
+                  memory_usage:
+                    type: number
+    
+    SuccessResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+        message:
+          type: string
+    
+    ChatRequest:
+      type: object
+      required:
+        - prompt
+      properties:
+        prompt:
+          type: string
+          description: User message/prompt
+        model:
+          type: string
+          description: Model name to use
+        system_prompt:
+          type: string
+          description: Optional system prompt
+        temperature:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 2
+          default: 0.7
+        stream:
+          type: boolean
+          default: false
+        conversation_id:
+          type: string
+          description: Optional conversation ID for context
+        unrestricted_mode:
+          type: boolean
+          description: Disable safety filters
+    
+    ChatResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+        data:
+          type: object
+          properties:
+            response:
+              type: string
+            conversation_id:
+              type: string
+            metadata:
+              type: object
+    
+    CompareRequest:
+      type: object
+      required:
+        - prompt
+        - models
+      properties:
+        prompt:
+          type: string
+        models:
+          type: array
+          items:
+            type: string
+          minItems: 2
+          maxItems: 5
+        system_prompt:
+          type: string
+        temperature:
+          type: number
+          format: float
+          default: 0.7
+        disable_safety_filters:
+          type: boolean
+    
+    CompareResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+        data:
+          type: object
+          properties:
+            prompt:
+              type: string
+            results:
+              type: array
+              items:
+                type: object
+                properties:
+                  model:
+                    type: string
+                  response:
+                    type: string
+                  response_time:
+                    type: number
+            total_models:
+              type: integer
+            successful:
+              type: integer
+            failed:
+              type: integer
+    
+    EnsembleRequest:
+      type: object
+      required:
+        - prompt
+        - models
+      properties:
+        prompt:
+          type: string
+        models:
+          type: array
+          items:
+            type: string
+          minItems: 2
+          maxItems: 5
+        method:
+          type: string
+          enum: [majority_vote, best, longest, shortest, concatenate, average]
+          default: majority_vote
+        system_prompt:
+          type: string
+        temperature:
+          type: number
+          format: float
+          default: 0.7
+    
+    EnsembleResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+        data:
+          type: object
+          properties:
+            response:
+              type: string
+            method:
+              type: string
+            models_used:
+              type: array
+              items:
+                type: string
+            individual_responses:
+              type: array
+              items:
+                type: object
+    
+    RouteRequest:
+      type: object
+      required:
+        - prompt
+      properties:
+        prompt:
+          type: string
+        task_type:
+          type: string
+          description: Optional explicit task type
+    
+    RouteResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+        data:
+          type: object
+          properties:
+            recommended_model:
+              type: string
+            detected_task:
+              type: string
+            confidence:
+              type: number
+            recommendations:
+              type: array
+              items:
+                type: string
+    
+    TaskTypesResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+        data:
+          type: object
+          properties:
+            task_types:
+              type: array
+              items:
+                type: string
+            count:
+              type: integer
+    
+    ConversationsListResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+        data:
+          type: object
+          properties:
+            conversations:
+              type: array
+              items:
+                type: object
+    
+    CreateConversationRequest:
+      type: object
+      properties:
+        model:
+          type: string
+        title:
+          type: string
+    
+    ConversationResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+        data:
+          type: object
+          properties:
+            conversation:
+              type: object
+            conversation_id:
+              type: string
+    
+    UsageStatisticsResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+        data:
+          type: object
+          properties:
+            total_calls:
+              type: integer
+            total_tokens:
+              type: integer
+            total_cost:
+              type: number
+            average_response_time:
+              type: number
+            by_backend:
+              type: object
+    
+    BudgetResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+        data:
+          type: object
+          properties:
+            daily_budget:
+              type: number
+            monthly_budget:
+              type: number
+            alert_threshold:
+              type: number
+            alerts_enabled:
+              type: boolean
+            current_daily_spend:
+              type: number
+            current_monthly_spend:
+              type: number
+    
+    BudgetRequest:
+      type: object
+      properties:
+        daily_budget:
+          type: number
+        monthly_budget:
+          type: number
+        alert_threshold:
+          type: number
+        alerts_enabled:
+          type: boolean
+    
+    ResourceUsageResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+        data:
+          type: object
+          properties:
+            cpu:
+              type: object
+            memory:
+              type: object
+            gpu:
+              type: object
+            disk:
+              type: object
+    
+    CleanupStatsResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+        data:
+          type: object
+          properties:
+            cache:
+              type: object
+            conversations:
+              type: object
+            temp_files:
+              type: object
+            logs:
+              type: object
+    
+    CleanupRequest:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [all, cache, conversations, temp, logs]
+        max_age_days:
+          type: integer
+        max_size_mb:
+          type: number
+        keep_recent:
+          type: integer
+    
+    CleanupResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+        data:
+          type: object
+          properties:
+            message:
+              type: string
+            total_bytes_freed:
+              type: integer
+            total_mb_freed:
+              type: number
+    
+    ErrorResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: error
+        message:
+          type: string
+        error_type:
+          type: string
+        details:
+          type: object
+

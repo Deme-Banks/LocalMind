@@ -12,6 +12,89 @@ let comparisonMode = false;
 let comparisonModels = [];
 let autoRouting = false;
 
+// Multiple chat sessions/tabs
+let chatTabs = [];
+let activeTabId = null;
+
+// Chat templates
+const chatTemplates = {
+    presets: [
+        {
+            id: 'general',
+            name: 'General Assistant',
+            icon: '💬',
+            description: 'Helpful and friendly AI assistant',
+            systemPrompt: 'You are a helpful, friendly, and knowledgeable AI assistant. Provide clear, accurate, and helpful responses.',
+            suggestedModel: null,
+            temperature: 0.7
+        },
+        {
+            id: 'coding',
+            name: 'Coding Assistant',
+            icon: '💻',
+            description: 'Expert programming help',
+            systemPrompt: 'You are an expert software developer and programming assistant. Write clean, efficient, and well-documented code. Explain your solutions clearly.',
+            suggestedModel: 'codellama',
+            temperature: 0.3
+        },
+        {
+            id: 'writing',
+            name: 'Writing Assistant',
+            icon: '✍️',
+            description: 'Creative and professional writing',
+            systemPrompt: 'You are a professional writer and editor. Help create engaging, well-structured, and polished written content. Provide suggestions for improvement.',
+            suggestedModel: null,
+            temperature: 0.8
+        },
+        {
+            id: 'analysis',
+            name: 'Analyst',
+            icon: '📊',
+            description: 'Data analysis and insights',
+            systemPrompt: 'You are a data analyst and researcher. Analyze information thoroughly, provide insights, and support conclusions with evidence.',
+            suggestedModel: null,
+            temperature: 0.5
+        },
+        {
+            id: 'creative',
+            name: 'Creative Writer',
+            icon: '🎨',
+            description: 'Creative storytelling and ideas',
+            systemPrompt: 'You are a creative writer and storyteller. Generate imaginative, engaging, and original content. Think outside the box.',
+            suggestedModel: null,
+            temperature: 1.0
+        },
+        {
+            id: 'teacher',
+            name: 'Teacher',
+            icon: '👨‍🏫',
+            description: 'Educational explanations',
+            systemPrompt: 'You are a patient and knowledgeable teacher. Explain concepts clearly, use examples, and adapt to different learning styles.',
+            suggestedModel: null,
+            temperature: 0.7
+        },
+        {
+            id: 'translator',
+            name: 'Translator',
+            icon: '🌐',
+            description: 'Language translation',
+            systemPrompt: 'You are a professional translator. Provide accurate translations while preserving meaning, tone, and cultural context.',
+            suggestedModel: null,
+            temperature: 0.3
+        },
+        {
+            id: 'debugger',
+            name: 'Debug Helper',
+            icon: '🐛',
+            description: 'Find and fix bugs',
+            systemPrompt: 'You are a debugging expert. Analyze code, identify issues, and provide clear explanations of problems and solutions.',
+            suggestedModel: 'codellama',
+            temperature: 0.2
+        }
+    ],
+    custom: []
+};
+
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', () => {
     initializeTheme();
@@ -66,8 +149,224 @@ async function initializeApp() {
     await loadConversations();
     loadComparisonModels();
     loadAutoRouting();
+    loadChatTemplates();
+    initializeChatTabs();
+    loadSharedConversation(); // Check for shared conversation in URL
     setupEventListeners();
     setupFileUpload();
+}
+
+// Chat Tabs Management
+function initializeChatTabs() {
+    // Create initial tab
+    if (chatTabs.length === 0) {
+        createNewChatTab();
+    } else {
+        // Restore tabs from localStorage
+        const savedTabs = localStorage.getItem('chatTabs');
+        if (savedTabs) {
+            try {
+                chatTabs = JSON.parse(savedTabs);
+                activeTabId = localStorage.getItem('activeTabId') || chatTabs[0]?.id || null;
+                renderChatTabs();
+                if (activeTabId) {
+                    switchToTab(activeTabId);
+                }
+            } catch (e) {
+                console.error('Error loading chat tabs:', e);
+                createNewChatTab();
+            }
+        } else {
+            createNewChatTab();
+        }
+    }
+}
+
+function createNewChatTab(title = null) {
+    const tabId = `tab-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const tab = {
+        id: tabId,
+        title: title || `Chat ${chatTabs.length + 1}`,
+        conversationId: null,
+        model: currentModel,
+        messages: [],
+        unread: false,
+        createdAt: new Date().toISOString()
+    };
+    
+    chatTabs.push(tab);
+    activeTabId = tabId;
+    renderChatTabs();
+    switchToTab(tabId);
+    saveChatTabs();
+    
+    return tabId;
+}
+
+function renderChatTabs() {
+    const tabsList = document.getElementById('chatTabsList');
+    if (!tabsList) return;
+    
+    tabsList.innerHTML = '';
+    
+    chatTabs.forEach(tab => {
+        const tabElement = document.createElement('div');
+        tabElement.className = `chat-tab ${tab.id === activeTabId ? 'active' : ''} ${tab.unread ? 'unread' : ''}`;
+        tabElement.onclick = (e) => {
+            if (e.target.classList.contains('chat-tab-close')) return;
+            switchToTab(tab.id);
+        };
+        
+        tabElement.innerHTML = `
+            <span class="chat-tab-title" title="${tab.title}">${tab.title}</span>
+            <button class="chat-tab-close" onclick="closeChatTab('${tab.id}', event)" title="Close tab (Ctrl+W)">×</button>
+            <span class="chat-tab-unread"></span>
+        `;
+        
+        tabsList.appendChild(tabElement);
+    });
+}
+
+function switchToTab(tabId) {
+    const tab = chatTabs.find(t => t.id === tabId);
+    if (!tab) return;
+    
+    // Save current tab state
+    if (activeTabId) {
+        saveCurrentTabState();
+    }
+    
+    // Switch to new tab
+    activeTabId = tabId;
+    currentConversationId = tab.conversationId;
+    currentModel = tab.model || currentModel;
+    
+    // Update UI
+    renderChatTabs();
+    loadTabMessages(tab);
+    updateModelSelectDisplay(currentModel);
+    
+    // Update conversation sidebar if needed
+    if (tab.conversationId) {
+        highlightConversation(tab.conversationId);
+    }
+    
+    saveChatTabs();
+}
+
+function saveCurrentTabState() {
+    if (!activeTabId) return;
+    
+    const tab = chatTabs.find(t => t.id === activeTabId);
+    if (!tab) return;
+    
+    // Save messages from DOM
+    const chatMessages = document.getElementById('chatMessages');
+    if (chatMessages) {
+        const messages = Array.from(chatMessages.querySelectorAll('.message')).map(msgEl => {
+            const role = msgEl.classList.contains('user') ? 'user' : 'assistant';
+            const textEl = msgEl.querySelector('.message-text');
+            return {
+                role: role,
+                content: textEl ? textEl.textContent : ''
+            };
+        });
+        tab.messages = messages;
+    }
+    
+    tab.conversationId = currentConversationId;
+    tab.model = currentModel;
+    tab.unread = false; // Mark as read when switching to it
+}
+
+function loadTabMessages(tab) {
+    const chatMessages = document.getElementById('chatMessages');
+    if (!chatMessages) return;
+    
+    // Clear current messages
+    chatMessages.innerHTML = '';
+    
+    if (tab.messages && tab.messages.length > 0) {
+        // Restore messages
+        tab.messages.forEach(msg => {
+            addMessage(msg.role, msg.content, false, false);
+        });
+    } else {
+        // Show welcome message
+        chatMessages.innerHTML = `
+            <div class="welcome-message">
+                <h2>Welcome to LocalMind</h2>
+                <p>Select a model and start chatting! Your conversations stay local and private.</p>
+                <p style="margin-top: 1rem; font-size: 0.875rem; color: var(--text-secondary);">
+                    💡 Tip: Press <kbd>Ctrl+T</kbd> for new tab, <kbd>Ctrl+W</kbd> to close tab
+                </p>
+            </div>
+        `;
+    }
+    
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+function closeChatTab(tabId, event) {
+    if (event) {
+        event.stopPropagation();
+    }
+    
+    const tabIndex = chatTabs.findIndex(t => t.id === tabId);
+    if (tabIndex === -1) return;
+    
+    // Don't allow closing the last tab
+    if (chatTabs.length <= 1) {
+        showToast('Cannot close the last tab', 'info');
+        return;
+    }
+    
+    // Save current tab state before closing
+    saveCurrentTabState();
+    
+    // Remove tab
+    chatTabs.splice(tabIndex, 1);
+    
+    // Switch to another tab
+    if (activeTabId === tabId) {
+        const newActiveIndex = Math.min(tabIndex, chatTabs.length - 1);
+        activeTabId = chatTabs[newActiveIndex]?.id || null;
+        if (activeTabId) {
+            switchToTab(activeTabId);
+        }
+    } else {
+        renderChatTabs();
+    }
+    
+    saveChatTabs();
+}
+
+function saveChatTabs() {
+    // Save current tab state first
+    saveCurrentTabState();
+    
+    localStorage.setItem('chatTabs', JSON.stringify(chatTabs));
+    if (activeTabId) {
+        localStorage.setItem('activeTabId', activeTabId);
+    }
+}
+
+function updateTabTitle(tabId, title) {
+    const tab = chatTabs.find(t => t.id === tabId);
+    if (tab) {
+        tab.title = title;
+        renderChatTabs();
+        saveChatTabs();
+    }
+}
+
+function markTabUnread(tabId) {
+    const tab = chatTabs.find(t => t.id === tabId);
+    if (tab && tab.id !== activeTabId) {
+        tab.unread = true;
+        renderChatTabs();
+        saveChatTabs();
+    }
 }
 
 function loadAutoRouting() {
@@ -518,6 +817,18 @@ function setupEventListeners() {
     
     // Keyboard shortcuts
     document.addEventListener('keydown', (e) => {
+        // Ctrl+T or Cmd+T: New tab
+        if ((e.ctrlKey || e.metaKey) && e.key === 't') {
+            e.preventDefault();
+            createNewChatTab();
+        }
+        // Ctrl+W or Cmd+W: Close current tab
+        if ((e.ctrlKey || e.metaKey) && e.key === 'w') {
+            e.preventDefault();
+            if (activeTabId) {
+                closeChatTab(activeTabId);
+            }
+        }
         // Ctrl+K or Cmd+K: New conversation
         if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
             e.preventDefault();
@@ -532,6 +843,14 @@ function setupEventListeners() {
         if ((e.ctrlKey || e.metaKey) && e.key === '/') {
             e.preventDefault();
             showAbout();
+        }
+        // Ctrl+1-9: Switch to tab by number
+        if ((e.ctrlKey || e.metaKey) && e.key >= '1' && e.key <= '9') {
+            e.preventDefault();
+            const tabIndex = parseInt(e.key) - 1;
+            if (chatTabs[tabIndex]) {
+                switchToTab(chatTabs[tabIndex].id);
+            }
         }
     });
     
@@ -1022,6 +1341,15 @@ async function sendMessageNormal(prompt, temperature, systemPrompt) {
         // Update conversation ID if returned
         if (data.conversation_id) {
             currentConversationId = data.conversation_id;
+            
+            // Update current tab with conversation ID
+            if (activeTabId) {
+                const tab = chatTabs.find(t => t.id === activeTabId);
+                if (tab) {
+                    tab.conversationId = currentConversationId;
+                    saveChatTabs();
+                }
+            }
             await loadConversations(); // Refresh list
         }
     } else {
@@ -1081,6 +1409,15 @@ async function sendMessageStream(prompt, temperature, systemPrompt) {
                         // Update conversation ID if returned
                         if (data.conversation_id) {
                             currentConversationId = data.conversation_id;
+            
+            // Update current tab with conversation ID
+            if (activeTabId) {
+                const tab = chatTabs.find(t => t.id === activeTabId);
+                if (tab) {
+                    tab.conversationId = currentConversationId;
+                    saveChatTabs();
+                }
+            }
                             loadConversations(); // Refresh list
                         }
                         return;
@@ -1928,6 +2265,15 @@ async function createNewConversation() {
         
         if (data.status === 'ok') {
             currentConversationId = data.conversation_id;
+            
+            // Update current tab with conversation ID
+            if (activeTabId) {
+                const tab = chatTabs.find(t => t.id === activeTabId);
+                if (tab) {
+                    tab.conversationId = currentConversationId;
+                    saveChatTabs();
+                }
+            }
             // Clear chat
             const chatMessages = document.getElementById('chatMessages');
             chatMessages.innerHTML = '<div class="welcome-message"><h2>Welcome to LocalMind</h2><p>Select a model and start chatting! Your conversations stay local and private.</p></div>';
@@ -2590,40 +2936,796 @@ function updateModelSelect() {
     }
 }
 
-// Export current chat
-async function exportCurrentChat() {
+// Export/Share Functions
+function showExportOptions() {
+    const modal = document.getElementById('exportShareModal');
+    if (modal) {
+        modal.style.display = 'flex';
+        document.getElementById('shareLinkContainer').style.display = 'none';
+    }
+}
+
+function closeExportShare() {
+    const modal = document.getElementById('exportShareModal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+}
+
+function getSelectedExportFormat() {
+    const selected = document.querySelector('input[name="exportFormat"]:checked');
+    return selected ? selected.value : 'markdown';
+}
+
+function getChatData() {
     const chatMessages = document.getElementById('chatMessages');
     const messages = chatMessages.querySelectorAll('.message');
     
     if (messages.length === 0) {
+        return null;
+    }
+    
+    const chatData = {
+        model: currentModel || 'Not selected',
+        conversationId: currentConversationId || null,
+        date: new Date().toISOString(),
+        messages: []
+    };
+    
+    messages.forEach(msg => {
+        const role = msg.classList.contains('user') ? 'user' : 'assistant';
+        const textDiv = msg.querySelector('.message-text');
+        const text = textDiv ? textDiv.textContent : '';
+        chatData.messages.push({
+            role: role,
+            content: text,
+            timestamp: msg.dataset.timestamp || new Date().toISOString()
+        });
+    });
+    
+    return chatData;
+}
+
+function exportChat() {
+    const chatData = getChatData();
+    if (!chatData) {
         showToast('No messages to export', 'info');
         return;
     }
     
-    let markdown = `# LocalMind Conversation\n\n`;
-    markdown += `**Model:** ${currentModel || 'Not selected'}\n`;
-    markdown += `**Date:** ${new Date().toLocaleString()}\n\n`;
-    markdown += `---\n\n`;
+    const format = getSelectedExportFormat();
+    let content = '';
+    let filename = '';
+    let mimeType = '';
     
-    messages.forEach(msg => {
-        const role = msg.classList.contains('user') ? 'User' : 'Assistant';
-        const textDiv = msg.querySelector('.message-text');
-        const text = textDiv ? textDiv.textContent : '';
-        markdown += `## ${role}\n\n${text}\n\n---\n\n`;
-    });
+    switch (format) {
+        case 'markdown':
+            content = exportAsMarkdown(chatData);
+            filename = `localmind_chat_${Date.now()}.md`;
+            mimeType = 'text/markdown';
+            break;
+        case 'txt':
+            content = exportAsText(chatData);
+            filename = `localmind_chat_${Date.now()}.txt`;
+            mimeType = 'text/plain';
+            break;
+        case 'json':
+            content = exportAsJSON(chatData);
+            filename = `localmind_chat_${Date.now()}.json`;
+            mimeType = 'application/json';
+            break;
+        case 'html':
+            content = exportAsHTML(chatData);
+            filename = `localmind_chat_${Date.now()}.html`;
+            mimeType = 'text/html';
+            break;
+    }
     
-    // Download as markdown file
-    const blob = new Blob([markdown], { type: 'text/markdown' });
+    // Download file
+    const blob = new Blob([content], { type: mimeType });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `localmind_chat_${Date.now()}.md`;
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     window.URL.revokeObjectURL(url);
     document.body.removeChild(a);
     
-    showToast('Chat exported successfully', 'success');
+    showToast(`Chat exported as ${format.toUpperCase()}`, 'success');
+    closeExportShare();
+}
+
+function exportAsMarkdown(chatData) {
+    let markdown = `# LocalMind Conversation\n\n`;
+    markdown += `**Model:** ${chatData.model}\n`;
+    markdown += `**Date:** ${new Date(chatData.date).toLocaleString()}\n`;
+    if (chatData.conversationId) {
+        markdown += `**Conversation ID:** ${chatData.conversationId}\n`;
+    }
+    markdown += `\n---\n\n`;
+    
+    chatData.messages.forEach(msg => {
+        const role = msg.role === 'user' ? 'User' : 'Assistant';
+        markdown += `## ${role}\n\n${msg.content}\n\n---\n\n`;
+    });
+    
+    return markdown;
+}
+
+function exportAsText(chatData) {
+    let text = `LocalMind Conversation\n`;
+    text += `Model: ${chatData.model}\n`;
+    text += `Date: ${new Date(chatData.date).toLocaleString()}\n`;
+    if (chatData.conversationId) {
+        text += `Conversation ID: ${chatData.conversationId}\n`;
+    }
+    text += `\n${'='.repeat(50)}\n\n`;
+    
+    chatData.messages.forEach(msg => {
+        const role = msg.role === 'user' ? 'USER' : 'ASSISTANT';
+        text += `${role}:\n${msg.content}\n\n${'-'.repeat(50)}\n\n`;
+    });
+    
+    return text;
+}
+
+function exportAsJSON(chatData) {
+    return JSON.stringify(chatData, null, 2);
+}
+
+function exportAsHTML(chatData) {
+    let html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LocalMind Conversation</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 800px; margin: 0 auto; padding: 2rem; line-height: 1.6; }
+        .header { border-bottom: 2px solid #e2e8f0; padding-bottom: 1rem; margin-bottom: 2rem; }
+        .message { margin-bottom: 2rem; padding: 1rem; border-radius: 0.5rem; }
+        .user { background: #f1f5f9; }
+        .assistant { background: #f8fafc; border-left: 3px solid #6366f1; }
+        .role { font-weight: bold; margin-bottom: 0.5rem; color: #64748b; }
+        .content { white-space: pre-wrap; }
+        pre { background: #1e293b; color: #f1f5f9; padding: 1rem; border-radius: 0.5rem; overflow-x: auto; }
+        code { background: #f1f5f9; padding: 0.2rem 0.4rem; border-radius: 0.25rem; font-size: 0.9em; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>LocalMind Conversation</h1>
+        <p><strong>Model:</strong> ${chatData.model}</p>
+        <p><strong>Date:</strong> ${new Date(chatData.date).toLocaleString()}</p>
+        ${chatData.conversationId ? `<p><strong>Conversation ID:</strong> ${chatData.conversationId}</p>` : ''}
+    </div>
+    <div class="messages">
+`;
+    
+    chatData.messages.forEach(msg => {
+        const role = msg.role === 'user' ? 'User' : 'Assistant';
+        const className = msg.role === 'user' ? 'user' : 'assistant';
+        html += `
+        <div class="message ${className}">
+            <div class="role">${role}</div>
+            <div class="content">${escapeHtml(msg.content)}</div>
+        </div>
+`;
+    });
+    
+    html += `
+    </div>
+</body>
+</html>`;
+    
+    return html;
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function copyChatToClipboard() {
+    const chatData = getChatData();
+    if (!chatData) {
+        showToast('No messages to copy', 'info');
+        return;
+    }
+    
+    const format = getSelectedExportFormat();
+    let content = '';
+    
+    switch (format) {
+        case 'markdown':
+            content = exportAsMarkdown(chatData);
+            break;
+        case 'txt':
+            content = exportAsText(chatData);
+            break;
+        case 'json':
+            content = exportAsJSON(chatData);
+            break;
+        case 'html':
+            content = exportAsHTML(chatData);
+            break;
+    }
+    
+    navigator.clipboard.writeText(content).then(() => {
+        showToast('Chat copied to clipboard', 'success');
+        closeExportShare();
+    }).catch(err => {
+        console.error('Failed to copy:', err);
+        showToast('Failed to copy to clipboard', 'error');
+    });
+}
+
+function generateShareableLink() {
+    const chatData = getChatData();
+    if (!chatData) {
+        showToast('No messages to share', 'info');
+        return;
+    }
+    
+    // Encode chat data as base64 in URL
+    const jsonData = JSON.stringify(chatData);
+    const encoded = btoa(unescape(encodeURIComponent(jsonData)));
+    const shareUrl = `${window.location.origin}${window.location.pathname}?share=${encoded}`;
+    
+    // Show share link
+    const container = document.getElementById('shareLinkContainer');
+    const input = document.getElementById('shareLinkInput');
+    if (container && input) {
+        input.value = shareUrl;
+        container.style.display = 'block';
+    }
+}
+
+function copyShareLink() {
+    const input = document.getElementById('shareLinkInput');
+    if (input) {
+        input.select();
+        navigator.clipboard.writeText(input.value).then(() => {
+            showToast('Share link copied to clipboard', 'success');
+        }).catch(err => {
+            console.error('Failed to copy:', err);
+            showToast('Failed to copy link', 'error');
+        });
+    }
+}
+
+// Import Conversation Functions
+function showImportOptions() {
+    const modal = document.getElementById('importConversationModal');
+    if (modal) {
+        modal.style.display = 'flex';
+        document.getElementById('importResultContainer').style.display = 'none';
+        document.getElementById('importFileInput').value = '';
+        document.getElementById('importContentInput').value = '';
+    }
+}
+
+function closeImportConversation() {
+    const modal = document.getElementById('importConversationModal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+}
+
+function getSelectedImportFormat() {
+    const selected = document.querySelector('input[name="importFormat"]:checked');
+    return selected ? selected.value : 'auto';
+}
+
+async function importConversation() {
+    const fileInput = document.getElementById('importFileInput');
+    const contentInput = document.getElementById('importContentInput');
+    const format = getSelectedImportFormat();
+    const resultContainer = document.getElementById('importResultContainer');
+    const resultMessage = document.getElementById('importResultMessage');
+    
+    let content = '';
+    let importFormat = format;
+    
+    // Check if file is selected
+    if (fileInput.files && fileInput.files.length > 0) {
+        const file = fileInput.files[0];
+        try {
+            content = await file.text();
+            // Auto-detect format from file extension if auto is selected
+            if (format === 'auto') {
+                const ext = file.name.split('.').pop().toLowerCase();
+                if (ext === 'json') importFormat = 'json';
+                else if (ext === 'md' || ext === 'markdown') importFormat = 'markdown';
+                else if (ext === 'txt') importFormat = 'txt';
+            }
+        } catch (error) {
+            showToast('Error reading file: ' + error.message, 'error');
+            return;
+        }
+    } else if (contentInput.value.trim()) {
+        // Use pasted content
+        content = contentInput.value.trim();
+        if (format === 'auto') {
+            // Try to auto-detect
+            if (content.trim().startsWith('{')) {
+                importFormat = 'json';
+            } else if (content.trim().startsWith('#')) {
+                importFormat = 'markdown';
+            } else {
+                importFormat = 'txt';
+            }
+        }
+    } else {
+        showToast('Please select a file or paste content', 'info');
+        return;
+    }
+    
+    if (!content) {
+        showToast('No content to import', 'error');
+        return;
+    }
+    
+    try {
+        // Show loading state
+        resultContainer.style.display = 'block';
+        resultMessage.innerHTML = '<div style="color: var(--text-secondary);">⏳ Importing conversation...</div>';
+        
+        // Prepare form data
+        const formData = new FormData();
+        const blob = new Blob([content], { type: 'text/plain' });
+        formData.append('file', blob, 'imported_conversation.txt');
+        formData.append('format', importFormat);
+        
+        // Send to server
+        const response = await fetch('/api/conversations/import', {
+            method: 'POST',
+            body: formData
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            const imported = data.data.imported_data;
+            resultMessage.innerHTML = `
+                <div style="color: var(--success);">
+                    ✅ <strong>Conversation imported successfully!</strong>
+                </div>
+                <div style="margin-top: 0.5rem; font-size: 0.875rem; color: var(--text-secondary);">
+                    • Model: ${imported.model || 'Unknown'}<br>
+                    • Messages: ${imported.message_count}<br>
+                    • Format: ${imported.format || 'auto'}
+                </div>
+                <button class="btn btn-primary btn-small" onclick="loadConversation('${data.data.conversation_id}'); closeImportConversation();" style="margin-top: 0.75rem;">
+                    Open Conversation
+                </button>
+            `;
+            
+            // Reload conversations list
+            await loadConversations();
+            
+            showToast('Conversation imported successfully', 'success');
+        } else {
+            resultMessage.innerHTML = `
+                <div style="color: var(--error);">
+                    ❌ <strong>Import failed:</strong> ${data.error || 'Unknown error'}
+                </div>
+            `;
+            showToast('Failed to import conversation: ' + (data.error || 'Unknown error'), 'error');
+        }
+    } catch (error) {
+        console.error('Import error:', error);
+        resultMessage.innerHTML = `
+            <div style="color: var(--error);">
+                ❌ <strong>Error:</strong> ${error.message}
+            </div>
+        `;
+        showToast('Error importing conversation: ' + error.message, 'error');
+    }
+}
+
+// Backup/Restore Configuration Functions
+function showBackupOptions() {
+    const modal = document.getElementById('backupConfigModal');
+    if (modal) {
+        modal.style.display = 'flex';
+        document.getElementById('backupResultContainer').style.display = 'none';
+        document.getElementById('backupIncludeConversations').checked = false;
+        document.getElementById('backupIncludeModels').checked = false;
+    }
+}
+
+function closeBackupConfig() {
+    const modal = document.getElementById('backupConfigModal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+}
+
+function showRestoreOptions() {
+    const modal = document.getElementById('restoreConfigModal');
+    if (modal) {
+        modal.style.display = 'flex';
+        document.getElementById('restoreResultContainer').style.display = 'none';
+        document.getElementById('restoreFileInput').value = '';
+        document.getElementById('restoreIncludeConversations').checked = false;
+        document.getElementById('restoreIncludeModels').checked = false;
+    }
+}
+
+function closeRestoreConfig() {
+    const modal = document.getElementById('restoreConfigModal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+}
+
+async function createBackup() {
+    const includeConversations = document.getElementById('backupIncludeConversations').checked;
+    const includeModels = document.getElementById('backupIncludeModels').checked;
+    const resultContainer = document.getElementById('backupResultContainer');
+    const resultMessage = document.getElementById('backupResultMessage');
+    
+    try {
+        resultContainer.style.display = 'block';
+        resultMessage.innerHTML = '<div style="color: var(--text-secondary);">⏳ Creating backup...</div>';
+        
+        const response = await fetch('/api/config/backup', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                include_conversations: includeConversations,
+                include_models: includeModels,
+                format: 'download'
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            const backupInfo = data.data.backup_info;
+            const downloadUrl = data.data.download_url;
+            
+            resultMessage.innerHTML = `
+                <div style="color: var(--success);">
+                    ✅ <strong>Backup created successfully!</strong>
+                </div>
+                <div style="margin-top: 0.5rem; font-size: 0.875rem; color: var(--text-secondary);">
+                    • Created: ${new Date(backupInfo.created_at).toLocaleString()}<br>
+                    • Includes conversations: ${backupInfo.includes_conversations ? 'Yes' : 'No'}<br>
+                    • Includes models: ${backupInfo.includes_models ? 'Yes' : 'No'}
+                </div>
+                <a href="${downloadUrl}" class="btn btn-primary btn-small" style="margin-top: 0.75rem; display: inline-block;">
+                    📥 Download Backup
+                </a>
+            `;
+            
+            showToast('Backup created successfully', 'success');
+        } else {
+            resultMessage.innerHTML = `
+                <div style="color: var(--error);">
+                    ❌ <strong>Backup failed:</strong> ${data.error || 'Unknown error'}
+                </div>
+            `;
+            showToast('Failed to create backup: ' + (data.error || 'Unknown error'), 'error');
+        }
+    } catch (error) {
+        console.error('Backup error:', error);
+        resultMessage.innerHTML = `
+            <div style="color: var(--error);">
+                ❌ <strong>Error:</strong> ${error.message}
+            </div>
+        `;
+        showToast('Error creating backup: ' + error.message, 'error');
+    }
+}
+
+async function restoreBackup() {
+    const fileInput = document.getElementById('restoreFileInput');
+    const restoreConversations = document.getElementById('restoreIncludeConversations').checked;
+    const restoreModels = document.getElementById('restoreIncludeModels').checked;
+    const resultContainer = document.getElementById('restoreResultContainer');
+    const resultMessage = document.getElementById('restoreResultMessage');
+    
+    if (!fileInput.files || fileInput.files.length === 0) {
+        showToast('Please select a backup file', 'info');
+        return;
+    }
+    
+    if (!confirm('Are you sure you want to restore from backup? This will overwrite your current configuration.')) {
+        return;
+    }
+    
+    try {
+        resultContainer.style.display = 'block';
+        resultMessage.innerHTML = '<div style="color: var(--text-secondary);">⏳ Restoring backup...</div>';
+        
+        const formData = new FormData();
+        formData.append('file', fileInput.files[0]);
+        formData.append('restore_conversations', restoreConversations);
+        formData.append('restore_models', restoreModels);
+        
+        const response = await fetch('/api/config/restore', {
+            method: 'POST',
+            body: formData
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            const results = data.data.results;
+            const errors = results.errors || [];
+            
+            let resultHtml = `
+                <div style="color: var(--success);">
+                    ✅ <strong>Configuration restored successfully!</strong>
+                </div>
+                <div style="margin-top: 0.5rem; font-size: 0.875rem; color: var(--text-secondary);">
+                    • Config: ${results.config ? '✅ Restored' : '❌ Failed'}<br>
+                    • Conversations: ${results.conversations ? '✅ Restored' : '❌ Failed'}<br>
+                    • Model Registry: ${results.model_registry ? '✅ Restored' : '❌ Failed'}
+                </div>
+            `;
+            
+            if (errors.length > 0) {
+                resultHtml += `
+                    <div style="margin-top: 0.75rem; padding: 0.5rem; background: var(--error-light); border-radius: 0.375rem; font-size: 0.875rem;">
+                        <strong>Errors:</strong><br>
+                        ${errors.map(e => `• ${e}`).join('<br>')}
+                    </div>
+                `;
+            }
+            
+            resultMessage.innerHTML = resultHtml;
+            
+            showToast('Configuration restored successfully. Please restart the server for changes to take effect.', 'success');
+            
+            // Close modal after a delay
+            setTimeout(() => {
+                closeRestoreConfig();
+            }, 3000);
+        } else {
+            resultMessage.innerHTML = `
+                <div style="color: var(--error);">
+                    ❌ <strong>Restore failed:</strong> ${data.error || 'Unknown error'}
+                </div>
+            `;
+            showToast('Failed to restore backup: ' + (data.error || 'Unknown error'), 'error');
+        }
+    } catch (error) {
+        console.error('Restore error:', error);
+        resultMessage.innerHTML = `
+            <div style="color: var(--error);">
+                ❌ <strong>Error:</strong> ${error.message}
+            </div>
+        `;
+        showToast('Error restoring backup: ' + error.message, 'error');
+    }
+}
+
+// Migration Tools Functions
+function showMigrationTools() {
+    const modal = document.getElementById('migrationToolsModal');
+    if (modal) {
+        modal.style.display = 'flex';
+        document.getElementById('migrationResultContainer').style.display = 'none';
+        detectMigrationSources();
+    }
+}
+
+function closeMigrationTools() {
+    const modal = document.getElementById('migrationToolsModal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+}
+
+async function detectMigrationSources() {
+    const sourcesList = document.getElementById('migrationSourcesList');
+    
+    try {
+        sourcesList.innerHTML = '<div style="text-align: center; padding: 1rem; color: var(--text-secondary);">🔍 Detecting...</div>';
+        
+        const response = await fetch('/api/migration/detect');
+        const data = await response.json();
+        
+        if (data.success) {
+            const sources = data.data.sources || [];
+            
+            if (sources.length === 0) {
+                sourcesList.innerHTML = `
+                    <div style="text-align: center; padding: 2rem; color: var(--text-secondary);">
+                        <div style="margin-bottom: 0.5rem;">📭 No migration sources detected</div>
+                        <div style="font-size: 0.875rem;">Use manual migration below to import from a file</div>
+                    </div>
+                `;
+            } else {
+                let html = '<div style="display: flex; flex-direction: column; gap: 0.75rem;">';
+                sources.forEach(source => {
+                    html += `
+                        <div style="padding: 1rem; border: 1px solid var(--border-color); border-radius: 0.5rem; background: var(--surface-light);">
+                            <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 0.5rem;">
+                                <div>
+                                    <strong>${source.name}</strong>
+                                    <div style="font-size: 0.875rem; color: var(--text-secondary); margin-top: 0.25rem;">
+                                        ${source.path}
+                                    </div>
+                                    <div style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 0.25rem;">
+                                        ${source.conversation_count || 0} conversations
+                                    </div>
+                                </div>
+                                <button class="btn btn-primary btn-small" onclick="migrateFromSource('${source.type}', '${source.path.replace(/'/g, "\\'")}')">
+                                    Migrate
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                });
+                html += '</div>';
+                sourcesList.innerHTML = html;
+            }
+        } else {
+            sourcesList.innerHTML = `
+                <div style="text-align: center; padding: 1rem; color: var(--error);">
+                    ❌ Error detecting sources: ${data.error || 'Unknown error'}
+                </div>
+            `;
+        }
+    } catch (error) {
+        console.error('Error detecting sources:', error);
+        sourcesList.innerHTML = `
+            <div style="text-align: center; padding: 1rem; color: var(--error);">
+                ❌ Error: ${error.message}
+            </div>
+        `;
+    }
+}
+
+async function migrateFromSource(sourceType, sourcePath) {
+    if (!confirm(`Migrate from ${sourceType}? This will import conversations into LocalMind.`)) {
+        return;
+    }
+    
+    const resultContainer = document.getElementById('migrationResultContainer');
+    const resultMessage = document.getElementById('migrationResultMessage');
+    
+    try {
+        resultContainer.style.display = 'block';
+        resultMessage.innerHTML = '<div style="color: var(--text-secondary);">⏳ Migrating...</div>';
+        
+        const response = await fetch('/api/migration/migrate', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                source_type: sourceType,
+                source_path: sourcePath,
+                options: {}
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            const results = data.data.results;
+            const migrated = results.conversations_migrated || 0;
+            const errors = results.errors || [];
+            const warnings = results.warnings || [];
+            
+            let resultHtml = `
+                <div style="color: var(--success);">
+                    ✅ <strong>Migration completed!</strong>
+                </div>
+                <div style="margin-top: 0.5rem; font-size: 0.875rem; color: var(--text-secondary);">
+                    • Conversations migrated: ${migrated}
+                </div>
+            `;
+            
+            if (warnings.length > 0) {
+                resultHtml += `
+                    <div style="margin-top: 0.75rem; padding: 0.5rem; background: var(--warning-light); border-radius: 0.375rem; font-size: 0.875rem;">
+                        <strong>Warnings:</strong><br>
+                        ${warnings.map(w => `• ${w}`).join('<br>')}
+                    </div>
+                `;
+            }
+            
+            if (errors.length > 0) {
+                resultHtml += `
+                    <div style="margin-top: 0.75rem; padding: 0.5rem; background: var(--error-light); border-radius: 0.375rem; font-size: 0.875rem;">
+                        <strong>Errors:</strong><br>
+                        ${errors.map(e => `• ${e}`).join('<br>')}
+                    </div>
+                `;
+            }
+            
+            resultMessage.innerHTML = resultHtml;
+            
+            // Reload conversations
+            await loadConversations();
+            
+            showToast(`Migration completed: ${migrated} conversations migrated`, 'success');
+        } else {
+            resultMessage.innerHTML = `
+                <div style="color: var(--error);">
+                    ❌ <strong>Migration failed:</strong> ${data.error || 'Unknown error'}
+                </div>
+            `;
+            showToast('Migration failed: ' + (data.error || 'Unknown error'), 'error');
+        }
+    } catch (error) {
+        console.error('Migration error:', error);
+        resultMessage.innerHTML = `
+            <div style="color: var(--error);">
+                ❌ <strong>Error:</strong> ${error.message}
+            </div>
+        `;
+        showToast('Error during migration: ' + error.message, 'error');
+    }
+}
+
+async function startMigration() {
+    const sourceType = document.getElementById('migrationSourceType').value;
+    const fileInput = document.getElementById('migrationFileInput');
+    
+    if (!fileInput.files || fileInput.files.length === 0) {
+        showToast('Please select a file to migrate', 'info');
+        return;
+    }
+    
+    // For file upload, we'll need to handle it differently
+    // For now, show a message that file upload migration needs to be done via import
+    showToast('For file uploads, please use the Import feature in the chat interface', 'info');
+    closeMigrationTools();
+}
+
+// Load shared conversation from URL
+function loadSharedConversation() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const shareParam = urlParams.get('share');
+    
+    if (shareParam) {
+        try {
+            const decoded = decodeURIComponent(escape(atob(shareParam)));
+            const chatData = JSON.parse(decoded);
+            
+            // Create a new tab with shared conversation
+            const tabId = createNewChatTab(chatData.model || 'Shared Conversation');
+            const tab = chatTabs.find(t => t.id === tabId);
+            
+            if (tab && chatData.messages) {
+                // Set model if available
+                if (chatData.model && chatData.model !== 'Not selected') {
+                    currentModel = chatData.model;
+                    selectModel(chatData.model);
+                }
+                
+                // Load messages
+                setTimeout(() => {
+                    const chatMessages = document.getElementById('chatMessages');
+                    if (chatMessages) {
+                        chatMessages.innerHTML = '';
+                        chatData.messages.forEach(msg => {
+                            addMessage(msg.role, msg.content, false, false);
+                        });
+                    }
+                }, 100);
+                
+                showToast('Shared conversation loaded', 'success');
+                
+                // Clean URL
+                window.history.replaceState({}, document.title, window.location.pathname);
+            }
+        } catch (e) {
+            console.error('Error loading shared conversation:', e);
+            showToast('Invalid share link', 'error');
+        }
+    }
 }
 
 // Comparison Mode Functions
@@ -3401,5 +4503,241 @@ document.addEventListener('click', (e) => {
             resourceAutoRefreshInterval = null;
         }
     }
+    
+    // Close chat templates modal
+    const templatesModal = document.getElementById('chatTemplatesModal');
+    if (templatesModal && e.target === templatesModal) {
+        closeChatTemplates();
+    }
 });
+
+// Chat Templates Functions
+function loadChatTemplates() {
+    const saved = localStorage.getItem('customChatTemplates');
+    if (saved) {
+        try {
+            chatTemplates.custom = JSON.parse(saved);
+        } catch (e) {
+            console.error('Error loading custom templates:', e);
+        }
+    }
+}
+
+function saveChatTemplates() {
+    localStorage.setItem('customChatTemplates', JSON.stringify(chatTemplates.custom));
+}
+
+function showChatTemplates() {
+    const modal = document.getElementById('chatTemplatesModal');
+    if (modal) {
+        modal.style.display = 'flex';
+        showTemplateTab('presets');
+        renderPresetTemplates();
+        renderCustomTemplates();
+    }
+}
+
+function closeChatTemplates() {
+    const modal = document.getElementById('chatTemplatesModal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+}
+
+function showTemplateTab(tab) {
+    // Hide all tabs
+    document.querySelectorAll('.tab-content').forEach(content => {
+        if (content.id.includes('template')) {
+            content.classList.remove('active');
+        }
+    });
+    document.querySelectorAll('.tab-btn').forEach((btn, idx) => {
+        const tabsContainer = btn.closest('.tabs');
+        if (tabsContainer && tabsContainer.parentElement.id === 'chatTemplatesModal') {
+            btn.classList.remove('active');
+        }
+    });
+    
+    // Show selected tab
+    if (tab === 'presets') {
+        const presetsTab = document.getElementById('templatePresetsTab');
+        const customTab = document.getElementById('templateCustomTab');
+        if (presetsTab) presetsTab.classList.add('active');
+        if (customTab) customTab.classList.remove('active');
+        const tabs = document.querySelectorAll('#chatTemplatesModal .tab-btn');
+        if (tabs[0]) tabs[0].classList.add('active');
+        if (tabs[1]) tabs[1].classList.remove('active');
+        renderPresetTemplates();
+    } else {
+        const presetsTab = document.getElementById('templatePresetsTab');
+        const customTab = document.getElementById('templateCustomTab');
+        if (presetsTab) presetsTab.classList.remove('active');
+        if (customTab) customTab.classList.add('active');
+        const tabs = document.querySelectorAll('#chatTemplatesModal .tab-btn');
+        if (tabs[0]) tabs[0].classList.remove('active');
+        if (tabs[1]) tabs[1].classList.add('active');
+        renderCustomTemplates();
+    }
+}
+
+function renderPresetTemplates() {
+    const list = document.getElementById('presetTemplatesList');
+    if (!list) return;
+    
+    list.innerHTML = '';
+    
+    chatTemplates.presets.forEach(template => {
+        const card = document.createElement('div');
+        card.className = 'template-card';
+        card.style.cssText = 'padding: 1rem; border: 1px solid var(--border-color); border-radius: 0.5rem; cursor: pointer; transition: all 0.2s; background: var(--surface-light);';
+        card.onmouseenter = () => {
+            card.style.background = 'var(--surface)';
+            card.style.borderColor = 'var(--primary-color)';
+        };
+        card.onmouseleave = () => {
+            card.style.background = 'var(--surface-light)';
+            card.style.borderColor = 'var(--border-color)';
+        };
+        card.onclick = () => applyTemplate(template);
+        
+        card.innerHTML = `
+            <div style="font-size: 2rem; margin-bottom: 0.5rem;">${template.icon}</div>
+            <h4 style="margin: 0.5rem 0;">${template.name}</h4>
+            <p style="font-size: 0.875rem; color: var(--text-secondary); margin: 0.5rem 0;">${template.description}</p>
+            ${template.suggestedModel ? `<div style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 0.5rem;">💡 Suggested: ${template.suggestedModel}</div>` : ''}
+        `;
+        
+        list.appendChild(card);
+    });
+}
+
+function renderCustomTemplates() {
+    const list = document.getElementById('customTemplatesList');
+    if (!list) return;
+    
+    list.innerHTML = '';
+    
+    if (chatTemplates.custom.length === 0) {
+        list.innerHTML = '<p style="color: var(--text-secondary); grid-column: 1 / -1;">No custom templates yet. Create one above!</p>';
+        return;
+    }
+    
+    chatTemplates.custom.forEach((template, index) => {
+        const card = document.createElement('div');
+        card.className = 'template-card';
+        card.style.cssText = 'padding: 1rem; border: 1px solid var(--border-color); border-radius: 0.5rem; cursor: pointer; transition: all 0.2s; background: var(--surface-light); position: relative;';
+        card.onmouseenter = () => {
+            card.style.background = 'var(--surface)';
+            card.style.borderColor = 'var(--primary-color)';
+        };
+        card.onmouseleave = () => {
+            card.style.background = 'var(--surface-light)';
+            card.style.borderColor = 'var(--border-color)';
+        };
+        
+        card.innerHTML = `
+            <div style="font-size: 2rem; margin-bottom: 0.5rem;">📝</div>
+            <h4 style="margin: 0.5rem 0;">${template.name}</h4>
+            <p style="font-size: 0.875rem; color: var(--text-secondary); margin: 0.5rem 0;">${template.description || 'Custom template'}</p>
+            ${template.suggestedModel ? `<div style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 0.5rem;">💡 Suggested: ${template.suggestedModel}</div>` : ''}
+            <div style="margin-top: 0.5rem; display: flex; gap: 0.5rem;">
+                <button class="btn btn-primary btn-small" onclick="applyCustomTemplate(${index})" style="flex: 1;">Apply</button>
+                <button class="btn btn-secondary btn-small" onclick="deleteCustomTemplate(${index}, event)" title="Delete">🗑️</button>
+            </div>
+        `;
+        
+        list.appendChild(card);
+    });
+}
+
+function applyCustomTemplate(index) {
+    const template = chatTemplates.custom[index];
+    if (template) {
+        applyTemplate(template);
+    }
+}
+
+function applyTemplate(template) {
+    // Apply system prompt
+    const systemPrompt = document.getElementById('systemPrompt');
+    if (systemPrompt) {
+        systemPrompt.value = template.systemPrompt;
+    }
+    
+    // Apply temperature
+    const temperature = document.getElementById('temperature');
+    const tempValue = document.getElementById('tempValue');
+    if (temperature && tempValue) {
+        temperature.value = template.temperature;
+        tempValue.textContent = template.temperature;
+    }
+    
+    // Suggest model if provided
+    if (template.suggestedModel) {
+        const modelSelect = document.getElementById('modelSelect');
+        if (modelSelect) {
+            const option = Array.from(modelSelect.options).find(opt => opt.value === template.suggestedModel);
+            if (option) {
+                selectModel(template.suggestedModel);
+                showToast(`Applied template: ${template.name}. Model suggested: ${template.suggestedModel}`, 'success');
+            } else {
+                showToast(`Applied template: ${template.name}. Model ${template.suggestedModel} not available`, 'info');
+            }
+        }
+    } else {
+        showToast(`Applied template: ${template.name}`, 'success');
+    }
+    
+    closeChatTemplates();
+}
+
+function saveCustomTemplate() {
+    const name = document.getElementById('customTemplateName')?.value.trim();
+    const prompt = document.getElementById('customTemplatePrompt')?.value.trim();
+    const model = document.getElementById('customTemplateModel')?.value.trim() || null;
+    const temp = parseFloat(document.getElementById('customTemplateTemp')?.value) || 0.7;
+    
+    if (!name || !prompt) {
+        showToast('Name and system prompt are required', 'error');
+        return;
+    }
+    
+    const template = {
+        id: `custom-${Date.now()}`,
+        name: name,
+        icon: '📝',
+        description: 'Custom template',
+        systemPrompt: prompt,
+        suggestedModel: model,
+        temperature: temp
+    };
+    
+    chatTemplates.custom.push(template);
+    saveChatTemplates();
+    renderCustomTemplates();
+    
+    // Clear form
+    const nameInput = document.getElementById('customTemplateName');
+    const promptInput = document.getElementById('customTemplatePrompt');
+    const modelInput = document.getElementById('customTemplateModel');
+    const tempInput = document.getElementById('customTemplateTemp');
+    if (nameInput) nameInput.value = '';
+    if (promptInput) promptInput.value = '';
+    if (modelInput) modelInput.value = '';
+    if (tempInput) tempInput.value = '0.7';
+    
+    showToast('Custom template saved!', 'success');
+}
+
+function deleteCustomTemplate(index, event) {
+    if (event) {
+        event.stopPropagation();
+    }
+    if (confirm('Delete this custom template?')) {
+        chatTemplates.custom.splice(index, 1);
+        saveChatTemplates();
+        renderCustomTemplates();
+        showToast('Template deleted', 'success');
+    }
+}
 

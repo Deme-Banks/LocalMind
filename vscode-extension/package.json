@@ -1,0 +1,123 @@
+{
+  "name": "localmind",
+  "displayName": "LocalMind",
+  "description": "Local AI assistant for VS Code - Integrate LocalMind into your development workflow",
+  "version": "1.0.0",
+  "publisher": "localmind",
+  "engines": {
+    "vscode": "^1.60.0"
+  },
+  "categories": [
+    "Other",
+    "Machine Learning",
+    "Snippets"
+  ],
+  "activationEvents": [
+    "onCommand:localmind.chat",
+    "onCommand:localmind.explain",
+    "onCommand:localmind.refactor",
+    "onCommand:localmind.fix",
+    "onCommand:localmind.generate"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "localmind.chat",
+        "title": "Chat",
+        "category": "LocalMind",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "localmind.explain",
+        "title": "Explain Code",
+        "category": "LocalMind",
+        "icon": "$(question)"
+      },
+      {
+        "command": "localmind.refactor",
+        "title": "Refactor Code",
+        "category": "LocalMind",
+        "icon": "$(tools)"
+      },
+      {
+        "command": "localmind.fix",
+        "title": "Fix Code",
+        "category": "LocalMind",
+        "icon": "$(check)"
+      },
+      {
+        "command": "localmind.generate",
+        "title": "Generate Code",
+        "category": "LocalMind",
+        "icon": "$(sparkle)"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "localmind.chat",
+        "key": "ctrl+alt+l",
+        "mac": "cmd+alt+l"
+      },
+      {
+        "command": "localmind.explain",
+        "key": "ctrl+alt+e",
+        "mac": "cmd+alt+e"
+      },
+      {
+        "command": "localmind.refactor",
+        "key": "ctrl+alt+r",
+        "mac": "cmd+alt+r"
+      },
+      {
+        "command": "localmind.fix",
+        "key": "ctrl+alt+f",
+        "mac": "cmd+alt+f"
+      }
+    ],
+    "configuration": {
+      "title": "LocalMind",
+      "properties": {
+        "localmind.apiUrl": {
+          "type": "string",
+          "default": "http://localhost:5000",
+          "description": "LocalMind API URL",
+          "pattern": "^https?://.*"
+        },
+        "localmind.defaultModel": {
+          "type": "string",
+          "default": "",
+          "description": "Default model to use (leave empty for auto-selection)"
+        },
+        "localmind.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable LocalMind integration"
+        },
+        "localmind.temperature": {
+          "type": "number",
+          "default": 0.7,
+          "minimum": 0,
+          "maximum": 2,
+          "description": "Temperature for AI responses (0.0-2.0)"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.60.0",
+    "@types/node": "^16.x",
+    "typescript": "^4.9.4",
+    "@vscode/vsce": "^2.22.0"
+  },
+  "dependencies": {
+    "axios": "^1.6.0"
+  }
+}
+

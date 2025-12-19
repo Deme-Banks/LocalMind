@@ -9,8 +9,9 @@ import subprocess
 import threading
 import time
 from pathlib import Path
+from datetime import datetime
 from typing import Dict, Any, Optional, Tuple
-from flask import Flask, render_template, request, jsonify, Response, stream_with_context
+from flask import Flask, render_template, request, jsonify, Response, stream_with_context, send_file
 from flask_cors import CORS
 import logging
 
@@ -25,6 +26,12 @@ from ..core.resource_monitor import ResourceMonitor
 from ..core.resource_cleanup import ResourceCleanup
 from ..core.ensemble import EnsembleProcessor
 from ..core.model_router import ModelRouter
+from ..core.conversation_importer import ConversationImporter
+from ..core.config_backup import ConfigBackup
+from ..core.migration_tools import MigrationTool
+from ..core.webhook_manager import WebhookManager, WebhookEvent
+from ..core.plugin_manager import PluginManager
+from ..core.streaming_enhancer import StreamingEnhancer, TokenVisualizer
 from ..utils.config import ConfigManager
 from ..utils.logger import setup_logger
 
@@ -54,6 +61,21 @@ class WebServer:
         self.resource_cleanup = ResourceCleanup()
         self.ensemble_processor = EnsembleProcessor()
         self.model_router = ModelRouter()
+        self.conversation_importer = ConversationImporter()
+        self.config_backup = ConfigBackup(
+            config_manager=self.config_manager,
+            conversations_dir=self.conversation_manager.conversations_dir,
+            models_dir=self.model_registry.registry_path.parent
+        )
+        self.migration_tool = MigrationTool(
+            config_manager=self.config_manager,
+            conversation_manager=self.conversation_manager,
+            model_registry=self.model_registry
+        )
+        self.webhook_manager = WebhookManager()
+        self.plugin_manager = PluginManager()
+        self.streaming_enhancer = StreamingEnhancer()
+        self.token_visualizer = TokenVisualizer()
         self.host = host
         self.port = port
         
@@ -173,6 +195,442 @@ class WebServer:
                     }), 404
             except Exception as e:
                 logger.error(f"Error reading changelog: {e}", exc_info=True)
+                return jsonify(self._error_response(str(e), error_type="server_error"))
+        
+        @self.app.route("/api/config/backup", methods=["POST"])
+        def api_backup_config() -> Tuple[Dict[str, Any], int]:
+            """Create a backup of configuration"""
+            try:
+                data = request.get_json() or {}
+                include_conversations = data.get("include_conversations", False)
+                include_models = data.get("include_models", False)
+                format_type = data.get("format", "json")  # json or download
+                
+                # Create backup
+                backup_data = self.config_backup.create_backup(
+                    include_conversations=include_conversations,
+                    include_models=include_models
+                )
+                
+                # Return backup data or save to file
+                if format_type == "download":
+                    # Create temporary file
+                    import tempfile
+                    if include_conversations or include_models:
+                        suffix = ".zip"
+                    else:
+                        suffix = ".json"
+                    
+                    with tempfile.NamedTemporaryFile(mode='w', suffix=suffix, delete=False, encoding='utf-8') as tmp:
+                        tmp_path = Path(tmp.name)
+                    
+                    # Export backup
+                    self.config_backup.export_backup(
+                        tmp_path,
+                        include_conversations=include_conversations,
+                        include_models=include_models
+                    )
+                    
+                    # Return file path for download
+                    return jsonify(self._success_response({
+                        "backup_file": tmp_path.name,
+                        "download_url": f"/api/config/backup/download/{tmp_path.name}",
+                        "backup_info": {
+                            "created_at": backup_data.get("created_at"),
+                            "includes_conversations": include_conversations,
+                            "includes_models": include_models
+                        }
+                    }))
+                else:
+                    # Return backup data directly
+                    return jsonify(self._success_response(backup_data))
+            except Exception as e:
+                logger.error(f"Error creating backup: {e}", exc_info=True)
+                return jsonify(self._error_response(str(e), error_type="server_error"))
+        
+        @self.app.route("/api/config/backup/download/<filename>", methods=["GET"])
+        def api_download_backup(filename: str):
+            """Download backup file"""
+            try:
+                import tempfile
+                tmp_dir = Path(tempfile.gettempdir())
+                backup_path = tmp_dir / filename
+                
+                if not backup_path.exists():
+                    return jsonify(self._error_response("Backup file not found", status_code=404, error_type="not_found")), 404
+                
+                return send_file(
+                    str(backup_path),
+                    as_attachment=True,
+                    download_name=f"localmind_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}{backup_path.suffix}"
+                )
+            except Exception as e:
+                logger.error(f"Error downloading backup: {e}", exc_info=True)
+                return jsonify(self._error_response(str(e), error_type="server_error"))
+        
+        @self.app.route("/api/config/restore", methods=["POST"])
+        def api_restore_config() -> Tuple[Dict[str, Any], int]:
+            """Restore configuration from backup"""
+            try:
+                # Check if it's a file upload or JSON data
+                if 'file' in request.files:
+                    # File upload
+                    file = request.files['file']
+                    if file.filename == '':
+                        return jsonify(self._error_response("No file selected", status_code=400, error_type="validation"))
+                    
+                    # Save uploaded file temporarily
+                    import tempfile
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=Path(file.filename).suffix) as tmp:
+                        file.save(tmp.name)
+                        tmp_path = Path(tmp.name)
+                    
+                    try:
+                        # Import backup
+                        backup_data = self.config_backup.import_backup_file(tmp_path)
+                    finally:
+                        # Clean up temp file
+                        tmp_path.unlink()
+                else:
+                    # JSON data in request body
+                    data = request.get_json()
+                    if not data:
+                        return jsonify(self._error_response("No backup data provided", status_code=400, error_type="validation"))
+                    backup_data = data
+                
+                # Get restore options
+                restore_conversations = request.form.get('restore_conversations', 'false').lower() == 'true' or \
+                                      (request.get_json() or {}).get('restore_conversations', False)
+                restore_models = request.form.get('restore_models', 'false').lower() == 'true' or \
+                               (request.get_json() or {}).get('restore_models', False)
+                
+                # Restore backup
+                results = self.config_backup.restore_backup(
+                    backup_data,
+                    restore_conversations=restore_conversations,
+                    restore_models=restore_models
+                )
+                
+                if results["errors"]:
+                    return jsonify(self._success_response({
+                        "message": "Restore completed with some errors",
+                        "results": results
+                    }))
+                else:
+                    return jsonify(self._success_response({
+                        "message": "Configuration restored successfully",
+                        "results": results
+                    }))
+            except Exception as e:
+                logger.error(f"Error restoring backup: {e}", exc_info=True)
+                return jsonify(self._error_response(str(e), error_type="server_error"))
+        
+        # Webhook Management Endpoints
+        @self.app.route("/api/webhooks", methods=["GET"])
+        def api_list_webhooks() -> Tuple[Dict[str, Any], int]:
+            """List all webhooks"""
+            try:
+                enabled_only = request.args.get("enabled_only", "false").lower() == "true"
+                webhooks = self.webhook_manager.list_webhooks(enabled_only=enabled_only)
+                return jsonify(self._success_response({
+                    "webhooks": webhooks,
+                    "count": len(webhooks)
+                }))
+            except Exception as e:
+                logger.error(f"Error listing webhooks: {e}", exc_info=True)
+                return jsonify(self._error_response(str(e), error_type="server_error"))
+        
+        @self.app.route("/api/webhooks", methods=["POST"])
+        def api_create_webhook() -> Tuple[Dict[str, Any], int]:
+            """Create a new webhook"""
+            try:
+                data = request.get_json()
+                url = data.get("url")
+                events = data.get("events", [])
+                secret = data.get("secret")
+                enabled = data.get("enabled", True)
+                description = data.get("description")
+                
+                if not url:
+                    return jsonify(self._error_response("URL required", status_code=400, error_type="validation"))
+                
+                if not events:
+                    return jsonify(self._error_response("At least one event required", status_code=400, error_type="validation"))
+                
+                webhook_id = self.webhook_manager.add_webhook(
+                    url=url,
+                    events=events,
+                    secret=secret,
+                    enabled=enabled,
+                    description=description
+                )
+                
+                return jsonify(self._success_response({
+                    "webhook_id": webhook_id,
+                    "message": "Webhook created successfully"
+                }))
+            except Exception as e:
+                logger.error(f"Error creating webhook: {e}", exc_info=True)
+                return jsonify(self._error_response(str(e), error_type="server_error"))
+        
+        @self.app.route("/api/webhooks/<webhook_id>", methods=["GET"])
+        def api_get_webhook(webhook_id: str) -> Tuple[Dict[str, Any], int]:
+            """Get webhook by ID"""
+            try:
+                webhook = self.webhook_manager.get_webhook(webhook_id)
+                if not webhook:
+                    return jsonify(self._error_response("Webhook not found", status_code=404, error_type="not_found"))
+                return jsonify(self._success_response(webhook))
+            except Exception as e:
+                logger.error(f"Error getting webhook: {e}", exc_info=True)
+                return jsonify(self._error_response(str(e), error_type="server_error"))
+        
+        @self.app.route("/api/webhooks/<webhook_id>", methods=["PUT"])
+        def api_update_webhook(webhook_id: str) -> Tuple[Dict[str, Any], int]:
+            """Update webhook"""
+            try:
+                data = request.get_json()
+                updated = self.webhook_manager.update_webhook(webhook_id, **data)
+                
+                if not updated:
+                    return jsonify(self._error_response("Webhook not found", status_code=404, error_type="not_found"))
+                
+                return jsonify(self._success_response({"message": "Webhook updated successfully"}))
+            except Exception as e:
+                logger.error(f"Error updating webhook: {e}", exc_info=True)
+                return jsonify(self._error_response(str(e), error_type="server_error"))
+        
+        @self.app.route("/api/webhooks/<webhook_id>", methods=["DELETE"])
+        def api_delete_webhook(webhook_id: str) -> Tuple[Dict[str, Any], int]:
+            """Delete webhook"""
+            try:
+                removed = self.webhook_manager.remove_webhook(webhook_id)
+                
+                if not removed:
+                    return jsonify(self._error_response("Webhook not found", status_code=404, error_type="not_found"))
+                
+                return jsonify(self._success_response({"message": "Webhook deleted successfully"}))
+            except Exception as e:
+                logger.error(f"Error deleting webhook: {e}", exc_info=True)
+                return jsonify(self._error_response(str(e), error_type="server_error"))
+        
+        @self.app.route("/api/webhooks/<webhook_id>/test", methods=["POST"])
+        def api_test_webhook(webhook_id: str) -> Tuple[Dict[str, Any], int]:
+            """Test webhook"""
+            try:
+                result = self.webhook_manager.test_webhook(webhook_id)
+                
+                if not result.get("success"):
+                    return jsonify(self._error_response(result.get("error", "Test failed"), status_code=400, error_type="test_failed"))
+                
+                return jsonify(self._success_response(result))
+            except Exception as e:
+                logger.error(f"Error testing webhook: {e}", exc_info=True)
+                return jsonify(self._error_response(str(e), error_type="server_error"))
+        
+        @self.app.route("/api/webhooks/events", methods=["GET"])
+        def api_list_webhook_events() -> Tuple[Dict[str, Any], int]:
+            """List available webhook event types"""
+            try:
+                events = [event.value for event in WebhookEvent]
+                return jsonify(self._success_response({
+                    "events": events,
+                    "descriptions": {
+                        "chat.message": "Triggered when a chat message is sent",
+                        "chat.complete": "Triggered when a chat response is completed",
+                        "conversation.created": "Triggered when a conversation is created",
+                        "conversation.updated": "Triggered when a conversation is updated",
+                        "conversation.deleted": "Triggered when a conversation is deleted",
+                        "model.selected": "Triggered when a model is selected",
+                        "model.downloaded": "Triggered when a model is downloaded",
+                        "error.occurred": "Triggered when an error occurs",
+                        "budget.exceeded": "Triggered when budget is exceeded",
+                        "system.startup": "Triggered on system startup",
+                        "system.shutdown": "Triggered on system shutdown"
+                    }
+                }))
+            except Exception as e:
+                logger.error(f"Error listing webhook events: {e}", exc_info=True)
+                return jsonify(self._error_response(str(e), error_type="server_error"))
+        
+        # Plugin Management Endpoints
+        @self.app.route("/api/plugins", methods=["GET"])
+        def api_list_plugins() -> Tuple[Dict[str, Any], int]:
+            """List all plugins"""
+            try:
+                enabled_only = request.args.get("enabled_only", "false").lower() == "true"
+                plugins = self.plugin_manager.list_plugins(enabled_only=enabled_only)
+                return jsonify(self._success_response({
+                    "plugins": plugins,
+                    "count": len(plugins)
+                }))
+            except Exception as e:
+                logger.error(f"Error listing plugins: {e}", exc_info=True)
+                return jsonify(self._error_response(str(e), error_type="server_error"))
+        
+        @self.app.route("/api/plugins/<plugin_id>", methods=["GET"])
+        def api_get_plugin(plugin_id: str) -> Tuple[Dict[str, Any], int]:
+            """Get plugin information"""
+            try:
+                plugin_info = self.plugin_manager.get_plugin_info(plugin_id)
+                if not plugin_info:
+                    return jsonify(self._error_response("Plugin not found", status_code=404, error_type="not_found"))
+                return jsonify(self._success_response(plugin_info))
+            except Exception as e:
+                logger.error(f"Error getting plugin: {e}", exc_info=True)
+                return jsonify(self._error_response(str(e), error_type="server_error"))
+        
+        @self.app.route("/api/plugins", methods=["POST"])
+        def api_install_plugin() -> Tuple[Dict[str, Any], int]:
+            """Install a plugin"""
+            try:
+                # Check if it's a file upload
+                if 'file' in request.files:
+                    file = request.files['file']
+                    if file.filename == '':
+                        return jsonify(self._error_response("No file selected", status_code=400, error_type="validation"))
+                    
+                    # Save uploaded file temporarily
+                    import tempfile
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as tmp:
+                        file.save(tmp.name)
+                        tmp_path = Path(tmp.name)
+                    
+                    try:
+                        plugin_id = request.form.get('plugin_id')
+                        result = self.plugin_manager.install_plugin(tmp_path, plugin_id)
+                    finally:
+                        # Clean up temp file
+                        tmp_path.unlink()
+                else:
+                    # JSON data with path
+                    data = request.get_json()
+                    if not data:
+                        return jsonify(self._error_response("No data provided", status_code=400, error_type="validation"))
+                    
+                    plugin_path = Path(data.get("path"))
+                    plugin_id = data.get("plugin_id")
+                    
+                    if not plugin_path.exists():
+                        return jsonify(self._error_response("Plugin path does not exist", status_code=400, error_type="validation"))
+                    
+                    result = self.plugin_manager.install_plugin(plugin_path, plugin_id)
+                
+                if result["success"]:
+                    return jsonify(self._success_response({
+                        "message": result["message"],
+                        "plugin_id": result["plugin_id"]
+                    }))
+                else:
+                    return jsonify(self._error_response(
+                        f"Installation failed: {', '.join(result['errors'])}",
+                        status_code=400,
+                        error_type="installation_error"
+                    ))
+            except Exception as e:
+                logger.error(f"Error installing plugin: {e}", exc_info=True)
+                return jsonify(self._error_response(str(e), error_type="server_error"))
+        
+        @self.app.route("/api/plugins/<plugin_id>", methods=["DELETE"])
+        def api_uninstall_plugin(plugin_id: str) -> Tuple[Dict[str, Any], int]:
+            """Uninstall a plugin"""
+            try:
+                result = self.plugin_manager.uninstall_plugin(plugin_id)
+                
+                if result["success"]:
+                    return jsonify(self._success_response({"message": result["message"]}))
+                else:
+                    return jsonify(self._error_response(
+                        f"Uninstallation failed: {', '.join(result['errors'])}",
+                        status_code=400,
+                        error_type="uninstallation_error"
+                    ))
+            except Exception as e:
+                logger.error(f"Error uninstalling plugin: {e}", exc_info=True)
+                return jsonify(self._error_response(str(e), error_type="server_error"))
+        
+        @self.app.route("/api/plugins/<plugin_id>/enable", methods=["POST"])
+        def api_enable_plugin(plugin_id: str) -> Tuple[Dict[str, Any], int]:
+            """Enable a plugin"""
+            try:
+                success = self.plugin_manager.enable_plugin(plugin_id)
+                if success:
+                    return jsonify(self._success_response({"message": f"Plugin '{plugin_id}' enabled"}))
+                else:
+                    return jsonify(self._error_response("Plugin not found", status_code=404, error_type="not_found"))
+            except Exception as e:
+                logger.error(f"Error enabling plugin: {e}", exc_info=True)
+                return jsonify(self._error_response(str(e), error_type="server_error"))
+        
+        @self.app.route("/api/plugins/<plugin_id>/disable", methods=["POST"])
+        def api_disable_plugin(plugin_id: str) -> Tuple[Dict[str, Any], int]:
+            """Disable a plugin"""
+            try:
+                success = self.plugin_manager.disable_plugin(plugin_id)
+                if success:
+                    return jsonify(self._success_response({"message": f"Plugin '{plugin_id}' disabled"}))
+                else:
+                    return jsonify(self._error_response("Plugin not found", status_code=404, error_type="not_found"))
+            except Exception as e:
+                logger.error(f"Error disabling plugin: {e}", exc_info=True)
+                return jsonify(self._error_response(str(e), error_type="server_error"))
+        
+        @self.app.route("/api/plugins/<plugin_id>/load", methods=["POST"])
+        def api_load_plugin(plugin_id: str) -> Tuple[Dict[str, Any], int]:
+            """Load a plugin module"""
+            try:
+                module = self.plugin_manager.load_plugin(plugin_id)
+                if module:
+                    return jsonify(self._success_response({
+                        "message": f"Plugin '{plugin_id}' loaded successfully",
+                        "module": module.__name__ if hasattr(module, '__name__') else str(module)
+                    }))
+                else:
+                    return jsonify(self._error_response("Failed to load plugin", status_code=400, error_type="load_error"))
+            except Exception as e:
+                logger.error(f"Error loading plugin: {e}", exc_info=True)
+                return jsonify(self._error_response(str(e), error_type="server_error"))
+        
+        @self.app.route("/api/config/unrestricted-mode", methods=["GET"])
+        def api_get_unrestricted_mode() -> Tuple[Dict[str, Any], int]:
+            """Get unrestricted mode setting"""
+            try:
+                config = self.config_manager.get_config()
+                unrestricted_mode = getattr(config, 'unrestricted_mode', True)
+                disable_safety_filters = getattr(config, 'disable_safety_filters', True)
+                
+                return jsonify(self._success_response({
+                    "unrestricted_mode": unrestricted_mode,
+                    "disable_safety_filters": disable_safety_filters
+                }))
+            except Exception as e:
+                logger.error(f"Error getting unrestricted mode: {e}", exc_info=True)
+                return jsonify(self._error_response(str(e), error_type="server_error"))
+        
+        @self.app.route("/api/config/unrestricted-mode", methods=["POST"])
+        def api_set_unrestricted_mode() -> Tuple[Dict[str, Any], int]:
+            """Set unrestricted mode setting"""
+            try:
+                data = request.get_json()
+                if data is None:
+                    return jsonify(self._error_response("No data provided", status_code=400, error_type="validation"))
+                
+                unrestricted_mode = data.get("unrestricted_mode", True)
+                disable_safety_filters = data.get("disable_safety_filters", unrestricted_mode)
+                
+                config = self.config_manager.get_config()
+                config.unrestricted_mode = unrestricted_mode
+                config.disable_safety_filters = disable_safety_filters
+                
+                self.config_manager.config = config
+                self.config_manager.save_config()
+                
+                return jsonify(self._success_response({
+                    "unrestricted_mode": unrestricted_mode,
+                    "disable_safety_filters": disable_safety_filters
+                }, message="Unrestricted mode updated successfully"))
+            except Exception as e:
+                logger.error(f"Error setting unrestricted mode: {e}", exc_info=True)
                 return jsonify(self._error_response(str(e), error_type="server_error"))
         
         @self.app.route("/api/config/providers", methods=["GET"])
@@ -829,6 +1287,13 @@ class WebServer:
                 success = self.conversation_manager.delete_conversation(conv_id)
                 if not success:
                     return jsonify(self._error_response("Conversation not found", status_code=404, error_type="not_found"))
+                
+                # Trigger webhook
+                self.webhook_manager.trigger_webhook(
+                    WebhookEvent.CONVERSATION_DELETED,
+                    {"conversation_id": conv_id}
+                )
+                
                 return jsonify(self._success_response())
             except Exception as e:
                 logger.error(f"Error deleting conversation: {e}", exc_info=True)
@@ -854,22 +1319,71 @@ class WebServer:
                 return jsonify({"status": "error", "message": str(e)}), 500
         
         @self.app.route("/api/conversations/import", methods=["POST"])
-        def api_import_conversation():
-            """Import a conversation"""
+        def api_import_conversation() -> Tuple[Dict[str, Any], int]:
+            """Import a conversation from a file or string"""
             try:
-                data = request.get_json()
-                if not data:
-                    return jsonify({"status": "error", "message": "No data provided"}), 400
-                conv_id = self.conversation_manager.import_conversation(data)
-                if not conv_id:
-                    return jsonify({"status": "error", "message": "Import failed"}), 500
-                return jsonify({
-                    "status": "ok",
-                    "conversation_id": conv_id
-                })
+                # Check if it's a file upload or JSON data
+                if 'file' in request.files:
+                    # File upload
+                    file = request.files['file']
+                    if file.filename == '':
+                        return jsonify(self._error_response("No file selected", status_code=400, error_type="validation"))
+                    
+                    # Read file content
+                    content = file.read().decode('utf-8')
+                    format_hint = request.form.get('format', 'auto')  # Optional format hint
+                    
+                    # Import using conversation importer
+                    imported_data = self.conversation_importer.import_from_string(
+                        content, 
+                        format_hint
+                    )
+                else:
+                    # JSON data in request body
+                    data = request.get_json()
+                    if not data:
+                        return jsonify(self._error_response("No data provided", status_code=400, error_type="validation"))
+                    
+                    content = data.get('content')
+                    format_hint = data.get('format', 'json')
+                    
+                    if not content:
+                        return jsonify(self._error_response("No content provided", status_code=400, error_type="validation"))
+                    
+                    # Import using conversation importer
+                    imported_data = self.conversation_importer.import_from_string(
+                        content,
+                        format_hint
+                    )
+                
+                # Convert to LocalMind format
+                localmind_data = self.conversation_importer.convert_to_localmind_format(imported_data)
+                if 'format_hint' in locals():
+                    localmind_data['metadata']['source_format'] = format_hint
+                else:
+                    localmind_data['metadata']['source_format'] = 'auto'
+                
+                # Save as conversation
+                conv_id = self.conversation_manager.save_conversation(
+                    title=localmind_data.get('title', 'Imported Conversation'),
+                    messages=localmind_data.get('messages', []),
+                    model=localmind_data.get('model', 'Unknown')
+                )
+                
+                return jsonify(self._success_response({
+                    "conversation_id": conv_id,
+                    "message": "Conversation imported successfully",
+                    "imported_data": {
+                        "model": localmind_data.get('model'),
+                        "message_count": len(localmind_data.get('messages', [])),
+                        "format": localmind_data.get('metadata', {}).get('source_format', 'unknown')
+                    }
+                }))
+            except ValueError as e:
+                return jsonify(self._error_response(str(e), status_code=400, error_type="validation"))
             except Exception as e:
-                logger.error(f"Error importing conversation: {e}")
-                return jsonify({"status": "error", "message": str(e)}), 500
+                logger.error(f"Error importing conversation: {e}", exc_info=True)
+                return jsonify(self._error_response(str(e), error_type="server_error"))
         
         def _get_backend_for_model(model: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
             """
@@ -1056,6 +1570,17 @@ class WebServer:
                     metadata={"model": model, "temperature": temperature, "system_prompt": system_prompt}
                 )
                 
+                # Trigger chat message webhook
+                self.webhook_manager.trigger_webhook(
+                    WebhookEvent.CHAT_MESSAGE,
+                    {
+                        "conversation_id": conv_id,
+                        "role": "user",
+                        "model": model,
+                        "prompt": prompt
+                    }
+                )
+                
                 if stream:
                     # Streaming response using Ollama's streaming API directly
                     def generate():
@@ -1111,6 +1636,18 @@ class WebServer:
                                                     full_response,
                                                     metadata={"model": model, "temperature": temperature}
                                                 )
+                                                
+                                                # Trigger webhook
+                                                self.webhook_manager.trigger_webhook(
+                                                    WebhookEvent.CHAT_COMPLETE,
+                                                    {
+                                                        "conversation_id": conv_id,
+                                                        "model": model,
+                                                        "prompt": prompt,
+                                                        "response_length": len(full_response)
+                                                    }
+                                                )
+                                                
                                                 yield f"data: {json.dumps({'done': True, 'conversation_id': conv_id})}\n\n"
                                                 break
                                         except json.JSONDecodeError:
@@ -1152,6 +1689,17 @@ class WebServer:
                         "assistant",
                         response.text,
                         metadata={"model": response.model, "temperature": temperature}
+                    )
+                    
+                    # Trigger webhooks
+                    self.webhook_manager.trigger_webhook(
+                        WebhookEvent.CHAT_COMPLETE,
+                        {
+                            "conversation_id": conv_id,
+                            "model": model,
+                            "prompt": prompt,
+                            "response_length": len(response.text)
+                        }
                     )
                     
                     # Track usage

@@ -154,6 +154,35 @@
                             </button>
                         </div>
                     </div>
+                    <div class="setting-item" style="border-top: 1px solid var(--border-color); padding-top: 1rem; margin-top: 1rem;">
+                        <div style="margin-bottom: 0.5rem;">
+                            <strong>💾 Backup & Restore</strong>
+                            <span style="display: block; font-size: 0.75rem; color: var(--text-secondary); margin-top: 0.25rem;">
+                                Backup or restore your configuration
+                            </span>
+                        </div>
+                        <div style="display: flex; gap: 0.5rem; margin-top: 0.75rem;">
+                            <button class="btn btn-secondary btn-small" onclick="showBackupOptions()" title="Backup Configuration">
+                                📥 Backup
+                            </button>
+                            <button class="btn btn-secondary btn-small" onclick="showRestoreOptions()" title="Restore Configuration">
+                                📤 Restore
+                            </button>
+                        </div>
+                    </div>
+                    <div class="setting-item" style="border-top: 1px solid var(--border-color); padding-top: 1rem; margin-top: 1rem;">
+                        <div style="margin-bottom: 0.5rem;">
+                            <strong>🔄 Migration Tools</strong>
+                            <span style="display: block; font-size: 0.75rem; color: var(--text-secondary); margin-top: 0.25rem;">
+                                Migrate from other AI tools or upgrade versions
+                            </span>
+                        </div>
+                        <div style="display: flex; gap: 0.5rem; margin-top: 0.75rem;">
+                            <button class="btn btn-secondary btn-small" onclick="showMigrationTools()" title="Migration Tools">
+                                🔄 Migrate
+                            </button>
+                        </div>
+                    </div>
                     <div class="setting-item">
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
                             <label for="unrestrictedMode" style="margin: 0; cursor: pointer;">
@@ -188,7 +217,12 @@
                 </div>
 
                 <div class="sidebar-section">
-                    <h3>System Prompt</h3>
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                        <h3 style="margin: 0;">System Prompt</h3>
+                        <button class="btn btn-secondary btn-small" onclick="showChatTemplates()" title="Chat Templates">
+                            📋 Templates
+                        </button>
+                    </div>
                     <textarea id="systemPrompt" class="system-prompt" 
                               placeholder="You are a helpful AI assistant."></textarea>
                 </div>
@@ -196,12 +230,22 @@
 
             <!-- Chat Area -->
             <main class="chat-area">
+                <!-- Chat Tabs -->
+                <div class="chat-tabs" id="chatTabs">
+                    <div class="chat-tabs-list" id="chatTabsList">
+                        <!-- Tabs will be dynamically added here -->
+                    </div>
+                    <button class="btn btn-primary btn-small" id="newTabBtn" onclick="createNewChatTab()" title="New Chat Tab (Ctrl+T)">
+                        <span>+</span>
+                    </button>
+                </div>
+                
                 <div class="chat-messages" id="chatMessages">
                     <div class="welcome-message">
                         <h2>Welcome to LocalMind</h2>
                         <p>Select a model and start chatting! Your conversations stay local and private.</p>
                         <p style="margin-top: 1rem; font-size: 0.875rem; color: var(--text-secondary);">
-                            💡 Tip: Press <kbd>Ctrl+K</kbd> for new chat, <kbd>Ctrl+/</kbd> for shortcuts
+                            💡 Tip: Press <kbd>Ctrl+T</kbd> for new tab, <kbd>Ctrl+W</kbd> to close tab, <kbd>Ctrl+/</kbd> for shortcuts
                         </p>
                     </div>
                 </div>
@@ -210,12 +254,16 @@
                         <button class="btn btn-secondary btn-small" id="clearChatBtn" onclick="clearChat()" title="Clear Chat (Ctrl+L)">
                             🗑️ Clear
                         </button>
-                        <button class="btn btn-secondary btn-small" id="exportChatBtn" onclick="exportCurrentChat()" title="Export Chat">
-                            💾 Export
+                        <button class="btn btn-secondary btn-small" id="exportChatBtn" onclick="showExportOptions()" title="Export/Share Chat">
+                            💾 Export/Share
+                        </button>
+                        <button class="btn btn-secondary btn-small" id="importChatBtn" onclick="showImportOptions()" title="Import Conversation">
+                            📥 Import
                         </button>
                         <button class="btn btn-secondary btn-small" id="qrCodeBtn" onclick="showQRCode()" title="Show QR Code for Network Access">
                             📱 QR Code
                         </button>
+                        <div id="streamingMetrics" style="display: none; font-size: 0.75rem; color: var(--text-secondary); margin-left: 0.5rem;"></div>
                         <div class="word-count" id="wordCount">
                             <span id="charCount">0</span> chars, <span id="wordCountNum">0</span> words
                         </div>
@@ -443,6 +491,346 @@
                     </div>
                     <div id="resourcesContent">
                         <p>Loading resource information...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Export/Share Modal -->
+    <div id="exportShareModal" class="modal">
+        <div class="modal-content" style="max-width: 600px;">
+            <div class="modal-header">
+                <h2>💾 Export/Share Chat</h2>
+                <button class="modal-close" onclick="closeExportShare()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div style="margin-bottom: 1.5rem;">
+                    <h3>Export Format</h3>
+                    <div style="display: flex; flex-direction: column; gap: 0.75rem; margin-top: 1rem;">
+                        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.75rem; border: 1px solid var(--border-color); border-radius: 0.5rem; transition: all 0.2s;" onmouseenter="this.style.background='var(--surface-light)'" onmouseleave="this.style.background='var(--background)'">
+                            <input type="radio" name="exportFormat" value="markdown" checked>
+                            <div>
+                                <strong>Markdown (.md)</strong>
+                                <div style="font-size: 0.875rem; color: var(--text-secondary);">Formatted markdown file</div>
+                            </div>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.75rem; border: 1px solid var(--border-color); border-radius: 0.5rem; transition: all 0.2s;" onmouseenter="this.style.background='var(--surface-light)'" onmouseleave="this.style.background='var(--background)'">
+                            <input type="radio" name="exportFormat" value="txt">
+                            <div>
+                                <strong>Plain Text (.txt)</strong>
+                                <div style="font-size: 0.875rem; color: var(--text-secondary);">Simple text file</div>
+                            </div>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.75rem; border: 1px solid var(--border-color); border-radius: 0.5rem; transition: all 0.2s;" onmouseenter="this.style.background='var(--surface-light)'" onmouseleave="this.style.background='var(--background)'">
+                            <input type="radio" name="exportFormat" value="json">
+                            <div>
+                                <strong>JSON (.json)</strong>
+                                <div style="font-size: 0.875rem; color: var(--text-secondary);">Structured data format</div>
+                            </div>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.75rem; border: 1px solid var(--border-color); border-radius: 0.5rem; transition: all 0.2s;" onmouseenter="this.style.background='var(--surface-light)'" onmouseleave="this.style.background='var(--background)'">
+                            <input type="radio" name="exportFormat" value="html">
+                            <div>
+                                <strong>HTML (.html)</strong>
+                                <div style="font-size: 0.875rem; color: var(--text-secondary);">Web page format</div>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+                
+                <div style="border-top: 1px solid var(--border-color); padding-top: 1.5rem; margin-top: 1.5rem;">
+                    <h3>Share Options</h3>
+                    <div style="display: flex; flex-direction: column; gap: 0.75rem; margin-top: 1rem;">
+                        <button class="btn btn-primary" onclick="exportChat()" style="width: 100%;">
+                            📥 Download File
+                        </button>
+                        <button class="btn btn-secondary" onclick="copyChatToClipboard()" style="width: 100%;">
+                            📋 Copy to Clipboard
+                        </button>
+                        <button class="btn btn-secondary" onclick="generateShareableLink()" style="width: 100%;">
+                            🔗 Generate Shareable Link
+                        </button>
+                    </div>
+                </div>
+                
+                <div id="shareLinkContainer" style="display: none; margin-top: 1rem; padding: 1rem; background: var(--surface-light); border-radius: 0.5rem; border: 1px solid var(--border-color);">
+                    <label style="display: block; margin-bottom: 0.5rem; font-weight: 500;">Shareable Link:</label>
+                    <div style="display: flex; gap: 0.5rem;">
+                        <input type="text" id="shareLinkInput" readonly style="flex: 1; padding: 0.5rem; border: 1px solid var(--border-color); border-radius: 0.375rem; background: var(--background);">
+                        <button class="btn btn-primary btn-small" onclick="copyShareLink()">Copy</button>
+                    </div>
+                    <p style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 0.5rem;">
+                        This link contains the full conversation. Share it with others to view the chat.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Import Conversation Modal -->
+    <div id="importConversationModal" class="modal">
+        <div class="modal-content" style="max-width: 600px;">
+            <div class="modal-header">
+                <h2>📥 Import Conversation</h2>
+                <button class="modal-close" onclick="closeImportConversation()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div style="margin-bottom: 1.5rem;">
+                    <h3>Import Format</h3>
+                    <div style="display: flex; flex-direction: column; gap: 0.75rem; margin-top: 1rem;">
+                        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.75rem; border: 1px solid var(--border-color); border-radius: 0.5rem; transition: all 0.2s;" onmouseenter="this.style.background='var(--surface-light)'" onmouseleave="this.style.background='var(--background)'">
+                            <input type="radio" name="importFormat" value="auto" checked>
+                            <div>
+                                <strong>Auto-detect</strong>
+                                <div style="font-size: 0.875rem; color: var(--text-secondary);">Automatically detect format</div>
+                            </div>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.75rem; border: 1px solid var(--border-color); border-radius: 0.5rem; transition: all 0.2s;" onmouseenter="this.style.background='var(--surface-light)'" onmouseleave="this.style.background='var(--background)'">
+                            <input type="radio" name="importFormat" value="json">
+                            <div>
+                                <strong>JSON</strong>
+                                <div style="font-size: 0.875rem; color: var(--text-secondary);">JSON format (LocalMind, OpenAI, etc.)</div>
+                            </div>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.75rem; border: 1px solid var(--border-color); border-radius: 0.5rem; transition: all 0.2s;" onmouseenter="this.style.background='var(--surface-light)'" onmouseleave="this.style.background='var(--background)'">
+                            <input type="radio" name="importFormat" value="markdown">
+                            <div>
+                                <strong>Markdown</strong>
+                                <div style="font-size: 0.875rem; color: var(--text-secondary);">Markdown file (.md)</div>
+                            </div>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.75rem; border: 1px solid var(--border-color); border-radius: 0.5rem; transition: all 0.2s;" onmouseenter="this.style.background='var(--surface-light)'" onmouseleave="this.style.background='var(--background)'">
+                            <input type="radio" name="importFormat" value="txt">
+                            <div>
+                                <strong>Plain Text</strong>
+                                <div style="font-size: 0.875rem; color: var(--text-secondary);">Plain text file (.txt)</div>
+                            </div>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.75rem; border: 1px solid var(--border-color); border-radius: 0.5rem; transition: all 0.2s;" onmouseenter="this.style.background='var(--surface-light)'" onmouseleave="this.style.background='var(--background)'">
+                            <input type="radio" name="importFormat" value="openai">
+                            <div>
+                                <strong>OpenAI Format</strong>
+                                <div style="font-size: 0.875rem; color: var(--text-secondary);">OpenAI API format</div>
+                            </div>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.75rem; border: 1px solid var(--border-color); border-radius: 0.5rem; transition: all 0.2s;" onmouseenter="this.style.background='var(--surface-light)'" onmouseleave="this.style.background='var(--background)'">
+                            <input type="radio" name="importFormat" value="anthropic">
+                            <div>
+                                <strong>Anthropic Format</strong>
+                                <div style="font-size: 0.875rem; color: var(--text-secondary);">Anthropic/Claude API format</div>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+                
+                <div style="border-top: 1px solid var(--border-color); padding-top: 1.5rem; margin-top: 1.5rem;">
+                    <h3>Import Method</h3>
+                    <div style="display: flex; flex-direction: column; gap: 0.75rem; margin-top: 1rem;">
+                        <div>
+                            <label style="display: block; margin-bottom: 0.5rem; font-weight: 500;">Upload File:</label>
+                            <input type="file" id="importFileInput" accept=".json,.md,.txt,.markdown" style="width: 100%; padding: 0.5rem; border: 1px solid var(--border-color); border-radius: 0.375rem; background: var(--background);">
+                        </div>
+                        <div style="text-align: center; color: var(--text-secondary);">or</div>
+                        <div>
+                            <label style="display: block; margin-bottom: 0.5rem; font-weight: 500;">Paste Content:</label>
+                            <textarea id="importContentInput" placeholder="Paste conversation content here..." style="width: 100%; min-height: 150px; padding: 0.75rem; border: 1px solid var(--border-color); border-radius: 0.375rem; background: var(--background); font-family: monospace; resize: vertical;"></textarea>
+                        </div>
+                        <button class="btn btn-primary" onclick="importConversation()" style="width: 100%; margin-top: 1rem;">
+                            📥 Import Conversation
+                        </button>
+                    </div>
+                </div>
+                
+                <div id="importResultContainer" style="display: none; margin-top: 1rem; padding: 1rem; background: var(--surface-light); border-radius: 0.5rem; border: 1px solid var(--border-color);">
+                    <div id="importResultMessage"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Backup Configuration Modal -->
+    <div id="backupConfigModal" class="modal">
+        <div class="modal-content" style="max-width: 600px;">
+            <div class="modal-header">
+                <h2>📥 Backup Configuration</h2>
+                <button class="modal-close" onclick="closeBackupConfig()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div style="margin-bottom: 1.5rem;">
+                    <h3>Backup Options</h3>
+                    <div style="display: flex; flex-direction: column; gap: 0.75rem; margin-top: 1rem;">
+                        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.75rem; border: 1px solid var(--border-color); border-radius: 0.5rem;">
+                            <input type="checkbox" id="backupIncludeConversations">
+                            <div>
+                                <strong>Include Conversations</strong>
+                                <div style="font-size: 0.875rem; color: var(--text-secondary);">Backup all saved conversations</div>
+                            </div>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.75rem; border: 1px solid var(--border-color); border-radius: 0.5rem;">
+                            <input type="checkbox" id="backupIncludeModels">
+                            <div>
+                                <strong>Include Model Registry</strong>
+                                <div style="font-size: 0.875rem; color: var(--text-secondary);">Backup model metadata and registry</div>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+                
+                <div style="border-top: 1px solid var(--border-color); padding-top: 1.5rem; margin-top: 1.5rem;">
+                    <button class="btn btn-primary" onclick="createBackup()" style="width: 100%;">
+                        📥 Create Backup
+                    </button>
+                </div>
+                
+                <div id="backupResultContainer" style="display: none; margin-top: 1rem; padding: 1rem; background: var(--surface-light); border-radius: 0.5rem; border: 1px solid var(--border-color);">
+                    <div id="backupResultMessage"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Restore Configuration Modal -->
+    <div id="restoreConfigModal" class="modal">
+        <div class="modal-content" style="max-width: 600px;">
+            <div class="modal-header">
+                <h2>📤 Restore Configuration</h2>
+                <button class="modal-close" onclick="closeRestoreConfig()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div style="margin-bottom: 1.5rem;">
+                    <h3>Restore Options</h3>
+                    <div style="display: flex; flex-direction: column; gap: 0.75rem; margin-top: 1rem;">
+                        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.75rem; border: 1px solid var(--border-color); border-radius: 0.5rem;">
+                            <input type="checkbox" id="restoreIncludeConversations">
+                            <div>
+                                <strong>Restore Conversations</strong>
+                                <div style="font-size: 0.875rem; color: var(--text-secondary);">Restore saved conversations from backup</div>
+                            </div>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding: 0.75rem; border: 1px solid var(--border-color); border-radius: 0.5rem;">
+                            <input type="checkbox" id="restoreIncludeModels">
+                            <div>
+                                <strong>Restore Model Registry</strong>
+                                <div style="font-size: 0.875rem; color: var(--text-secondary);">Restore model metadata from backup</div>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+                
+                <div style="border-top: 1px solid var(--border-color); padding-top: 1.5rem; margin-top: 1.5rem;">
+                    <h3>Backup File</h3>
+                    <div style="margin-top: 1rem;">
+                        <input type="file" id="restoreFileInput" accept=".json,.zip" style="width: 100%; padding: 0.5rem; border: 1px solid var(--border-color); border-radius: 0.375rem; background: var(--background);">
+                    </div>
+                    <button class="btn btn-primary" onclick="restoreBackup()" style="width: 100%; margin-top: 1rem;">
+                        📤 Restore from Backup
+                    </button>
+                </div>
+                
+                <div id="restoreResultContainer" style="display: none; margin-top: 1rem; padding: 1rem; background: var(--surface-light); border-radius: 0.5rem; border: 1px solid var(--border-color);">
+                    <div id="restoreResultMessage"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Migration Tools Modal -->
+    <div id="migrationToolsModal" class="modal">
+        <div class="modal-content" style="max-width: 800px;">
+            <div class="modal-header">
+                <h2>🔄 Migration Tools</h2>
+                <button class="modal-close" onclick="closeMigrationTools()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div style="margin-bottom: 1.5rem;">
+                    <h3>Detected Migration Sources</h3>
+                    <div id="migrationSourcesList" style="margin-top: 1rem;">
+                        <div style="text-align: center; padding: 2rem; color: var(--text-secondary);">
+                            <div style="margin-bottom: 0.5rem;">🔍 Detecting migration sources...</div>
+                        </div>
+                    </div>
+                    <button class="btn btn-secondary btn-small" onclick="detectMigrationSources()" style="margin-top: 1rem;">
+                        🔍 Re-detect Sources
+                    </button>
+                </div>
+                
+                <div style="border-top: 1px solid var(--border-color); padding-top: 1.5rem; margin-top: 1.5rem;">
+                    <h3>Manual Migration</h3>
+                    <div style="margin-top: 1rem;">
+                        <label style="display: block; margin-bottom: 0.5rem; font-weight: 500;">Source Type:</label>
+                        <select id="migrationSourceType" style="width: 100%; padding: 0.5rem; border: 1px solid var(--border-color); border-radius: 0.375rem; background: var(--background); margin-bottom: 1rem;">
+                            <option value="chatgpt">ChatGPT Export</option>
+                            <option value="claude">Claude/Anthropic Export</option>
+                            <option value="ollama_history">Ollama History</option>
+                            <option value="json">Generic JSON</option>
+                        </select>
+                        
+                        <label style="display: block; margin-bottom: 0.5rem; font-weight: 500;">Source File:</label>
+                        <input type="file" id="migrationFileInput" accept=".json" style="width: 100%; padding: 0.5rem; border: 1px solid var(--border-color); border-radius: 0.375rem; background: var(--background); margin-bottom: 1rem;">
+                        
+                        <button class="btn btn-primary" onclick="startMigration()" style="width: 100%;">
+                            🔄 Start Migration
+                        </button>
+                    </div>
+                </div>
+                
+                <div id="migrationResultContainer" style="display: none; margin-top: 1rem; padding: 1rem; background: var(--surface-light); border-radius: 0.5rem; border: 1px solid var(--border-color);">
+                    <div id="migrationResultMessage"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Chat Templates Modal -->
+    <div id="chatTemplatesModal" class="modal">
+        <div class="modal-content" style="max-width: 800px;">
+            <div class="modal-header">
+                <h2>📋 Chat Templates</h2>
+                <button class="modal-close" onclick="closeChatTemplates()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="tabs">
+                    <button class="tab-btn active" onclick="showTemplateTab('presets')">Presets</button>
+                    <button class="tab-btn" onclick="showTemplateTab('custom')">Custom</button>
+                </div>
+
+                <!-- Presets Tab -->
+                <div id="templatePresetsTab" class="tab-content active">
+                    <div id="presetTemplatesList" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 1rem; margin-top: 1rem;">
+                        <!-- Templates will be loaded here -->
+                    </div>
+                </div>
+
+                <!-- Custom Tab -->
+                <div id="templateCustomTab" class="tab-content">
+                    <div style="margin-top: 1rem;">
+                        <h3>Create Custom Template</h3>
+                        <div style="display: flex; flex-direction: column; gap: 1rem; margin-top: 1rem;">
+                            <div>
+                                <label>Template Name:</label>
+                                <input type="text" id="customTemplateName" placeholder="My Custom Template" style="width: 100%; padding: 0.5rem; margin-top: 0.25rem;">
+                            </div>
+                            <div>
+                                <label>System Prompt:</label>
+                                <textarea id="customTemplatePrompt" placeholder="You are a helpful AI assistant..." style="width: 100%; padding: 0.5rem; margin-top: 0.25rem; min-height: 100px; font-family: inherit;"></textarea>
+                            </div>
+                            <div>
+                                <label>Suggested Model (optional):</label>
+                                <input type="text" id="customTemplateModel" placeholder="llama3" style="width: 100%; padding: 0.5rem; margin-top: 0.25rem;">
+                            </div>
+                            <div>
+                                <label>Temperature:</label>
+                                <input type="number" id="customTemplateTemp" min="0" max="2" step="0.1" value="0.7" style="width: 100%; padding: 0.5rem; margin-top: 0.25rem;">
+                            </div>
+                            <button class="btn btn-primary" onclick="saveCustomTemplate()">Save Template</button>
+                        </div>
+                    </div>
+                    <div style="margin-top: 2rem; border-top: 1px solid var(--border-color); padding-top: 1.5rem;">
+                        <h3>Your Custom Templates</h3>
+                        <div id="customTemplatesList" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 1rem; margin-top: 1rem;">
+                            <!-- Custom templates will be loaded here -->
+                        </div>
                     </div>
                 </div>
             </div>

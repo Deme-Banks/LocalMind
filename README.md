@@ -5,12 +5,16 @@ A lightweight, privacy-focused local AI that runs fully on your computer. Suppor
 ## 📚 Documentation
 
 - **[API Documentation](API_DOCUMENTATION.md)** - Complete REST API reference
+- **[OpenAPI/Swagger Spec](openapi.yaml)** - OpenAPI 3.0 specification for API documentation
 - **[Troubleshooting Guide](TROUBLESHOOTING.md)** - Common issues and solutions
 - **[Installation Guide](INSTALL_STEPS.md)** - Detailed setup instructions
 - **[Quick Start](QUICKSTART.md)** - Get started in 5 minutes
 - **[Development Plan](DEVELOPMENT_PLAN.md)** - Project roadmap and architecture
 - **[Contributing Guide](CONTRIBUTING.md)** - How to contribute to LocalMind
 - **[Code Examples](CODE_EXAMPLES.md)** - Practical usage examples
+- **[Discord Integration](DISCORD_INTEGRATION.md)** - How to integrate with Discord webhooks
+- **[Plugin Guide](PLUGIN_GUIDE.md)** - How to create and install plugins
+- **[VS Code Integration](VSCODE_INTEGRATION.md)** - VS Code extension guide
 
 ## Features
 
