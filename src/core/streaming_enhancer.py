@@ -23,7 +23,7 @@ class StreamingEnhancer:
         }
         self.latency_history = deque(maxlen=100)  # Keep last 100 latencies
     
-    def enhance_stream(
+    async def enhance_stream(
         self, 
         stream: AsyncIterator[str],
         include_metrics: bool = True,

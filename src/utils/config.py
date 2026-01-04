@@ -33,6 +33,7 @@ class LocalMindConfig(BaseModel):
     default_model: str = "llama2"
     backends: Dict[str, BackendConfig] = Field(default_factory=dict)
     models: Dict[str, ModelConfig] = Field(default_factory=dict)
+    video_backends: Dict[str, BackendConfig] = Field(default_factory=dict, description="Video generation backends")
     modules: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
     storage_path: Path = Field(default_factory=lambda: Path.home() / ".localmind")
     log_level: str = Field(default="INFO")
@@ -261,6 +262,38 @@ class ConfigManager:
                     model_id="llama2",
                     context_size=4096,
                     temperature=0.7
+                )
+            },
+            video_backends={
+                "sora": BackendConfig(
+                    type="sora",
+                    enabled=False,
+                    settings={
+                        "api_key": os.getenv("OPENAI_API_KEY", ""),
+                        "base_url": os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+                        "video_storage_path": os.path.join(os.getcwd(), "videos"),
+                        "timeout": 300
+                    }
+                ),
+                "runway": BackendConfig(
+                    type="runway",
+                    enabled=False,
+                    settings={
+                        "api_key": os.getenv("RUNWAY_API_KEY", ""),
+                        "base_url": os.getenv("RUNWAY_BASE_URL", "https://api.runwayml.com/v1"),
+                        "video_storage_path": os.path.join(os.getcwd(), "videos"),
+                        "timeout": 300
+                    }
+                ),
+                "pika": BackendConfig(
+                    type="pika",
+                    enabled=False,
+                    settings={
+                        "api_key": os.getenv("PIKA_API_KEY", ""),
+                        "base_url": os.getenv("PIKA_BASE_URL", "https://api.pika.art/v1"),
+                        "video_storage_path": os.path.join(os.getcwd(), "videos"),
+                        "timeout": 300
+                    }
                 )
             }
         )

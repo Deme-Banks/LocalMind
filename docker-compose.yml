@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  localmind:
+    build: .
+    container_name: localmind
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./conversations:/app/conversations
+      - ./models:/app/models
+      - ./plugins:/app/plugins
+      - localmind-config:/root/.localmind
+    environment:
+      - PYTHONUNBUFFERED=1
+      - FLASK_ENV=production
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/api/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  localmind-config:
+    driver: local
+

@@ -240,7 +240,7 @@ def setup(ctx):
                 console.print(f"[dim]○ {display_name} - Not configured[/dim]")
     
     console.print("\n[green]Setup complete![/green]")
-    console.print("Run 'python configure_apis.py' to configure API keys")
+    console.print("Run 'python scripts/configure_apis.py' to configure API keys")
     console.print("Or run 'localmind chat' to start chatting!")
 
 
@@ -392,11 +392,21 @@ def web(ctx, host, port, debug):
         
         server.run(debug=debug)
     except ImportError as e:
-        console.print(f"[red]Error: Missing dependencies. Run: pip install flask flask-cors[/red]")
+        missing_module = str(e).split("'")[1] if "'" in str(e) else "unknown"
+        console.print(f"[red]Error: Missing dependency: {missing_module}[/red]")
+        console.print(f"[yellow]Please install all dependencies:[/yellow]")
+        console.print(f"[cyan]  pip install -r requirements.txt[/cyan]")
         console.print(f"[dim]{e}[/dim]")
         sys.exit(1)
     except Exception as e:
-        console.print(f"[red]Error starting web server: {e}[/red]")
+        error_msg = str(e)
+        if "No module named" in error_msg:
+            missing_module = error_msg.split("'")[1] if "'" in error_msg else "unknown"
+            console.print(f"[red]Error: Missing dependency: {missing_module}[/red]")
+            console.print(f"[yellow]Please install all dependencies:[/yellow]")
+            console.print(f"[cyan]  pip install -r requirements.txt[/cyan]")
+        else:
+            console.print(f"[red]Error starting web server: {e}[/red]")
         sys.exit(1)
 
 

@@ -1,6 +1,10 @@
 @echo off
 REM LocalMind Web Server Control Script (Advanced)
 REM This script provides options for starting the web interface
+REM Includes: AI Chat, Text-to-Video Generation, Real-time Updates
+
+REM Change to project root directory (parent of scripts folder)
+cd /d "%~dp0.."
 
 :menu
 cls

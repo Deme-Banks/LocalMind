@@ -1,5 +1,10 @@
 # LocalMind Web Server Control Script (PowerShell)
 # This script starts the LocalMind web interface with multiple AI backends
+# Includes: AI Chat, Text-to-Video Generation, Real-time Updates
+
+# Change to project root directory (parent of scripts folder)
+$scriptPath = Split-Path -Parent $MyInvocation.MyCommand.Path
+Set-Location (Join-Path $scriptPath "..")
 
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "  LocalMind Web Server" -ForegroundColor Cyan
@@ -57,6 +62,8 @@ Write-Host "  - Local AI models (Ollama)" -ForegroundColor White
 Write-Host "  - API models (ChatGPT, Claude, Gemini, etc.)" -ForegroundColor White
 Write-Host "  - Model management and downloads" -ForegroundColor White
 Write-Host "  - Professional web interface" -ForegroundColor White
+Write-Host "  - Text-to-Video generation (Sora, Runway, Pika)" -ForegroundColor White
+Write-Host "  - Real-time progress updates" -ForegroundColor White
 Write-Host ""
 
 # Check API keys
@@ -80,6 +87,12 @@ if (-not $hasApiKeys) {
     Write-Host "         Or visit: http://localhost:5000/configure" -ForegroundColor Gray
     Write-Host "         See API_CONFIGURATION.md for setup instructions" -ForegroundColor Gray
 }
+
+Write-Host ""
+Write-Host "Video Generation:" -ForegroundColor Yellow
+Write-Host "  - Visit: http://localhost:5000/video" -ForegroundColor White
+Write-Host "  - Supports Sora 2, Runway ML, Pika Labs" -ForegroundColor White
+Write-Host "  - Real-time progress tracking" -ForegroundColor White
 
 Write-Host ""
 Write-Host "The web interface will be available at:" -ForegroundColor Yellow

@@ -11,6 +11,7 @@ let unrestrictedMode = true; // Default to unrestricted
 let comparisonMode = false;
 let comparisonModels = [];
 let autoRouting = false;
+let isSending = false; // Prevent duplicate sends
 
 // Multiple chat sessions/tabs
 let chatTabs = [];
@@ -101,6 +102,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initializeMarkdown();
     initializeApp();
     loadUnrestrictedMode();
+    initializeCollapsibleSections();
 });
 
 // Configure markdown rendering
@@ -150,14 +152,14 @@ async function initializeApp() {
     loadComparisonModels();
     loadAutoRouting();
     loadChatTemplates();
-    initializeChatTabs();
+    await initializeChatTabs();
     loadSharedConversation(); // Check for shared conversation in URL
     setupEventListeners();
     setupFileUpload();
 }
 
 // Chat Tabs Management
-function initializeChatTabs() {
+async function initializeChatTabs() {
     // Create initial tab
     if (chatTabs.length === 0) {
         createNewChatTab();
@@ -167,7 +169,43 @@ function initializeChatTabs() {
         if (savedTabs) {
             try {
                 chatTabs = JSON.parse(savedTabs);
+                
+                // Filter out tabs with deleted conversations
+                if (conversations.length > 0) {
+                    const validConvIds = new Set(conversations.map(c => c.id));
+                    chatTabs = chatTabs.filter(tab => {
+                        // Keep tabs without conversationId (new chats) or with valid conversationId
+                        return !tab.conversationId || validConvIds.has(tab.conversationId);
+                    });
+                } else {
+                    // If conversations not loaded yet, load them first
+                    try {
+                        const response = await fetch('/api/conversations');
+                        const data = await response.json();
+                        if (data.status === 'ok' && data.conversations) {
+                            const validConvIds = new Set(data.conversations.map(c => c.id));
+                            chatTabs = chatTabs.filter(tab => {
+                                return !tab.conversationId || validConvIds.has(tab.conversationId);
+                            });
+                        }
+                    } catch (e) {
+                        console.error('Error loading conversations for tab validation:', e);
+                    }
+                }
+                
+                // If no valid tabs remain, create a new one
+                if (chatTabs.length === 0) {
+                    createNewChatTab();
+                    return;
+                }
+                
                 activeTabId = localStorage.getItem('activeTabId') || chatTabs[0]?.id || null;
+                // Ensure activeTabId is valid
+                if (activeTabId && !chatTabs.find(tab => tab.id === activeTabId)) {
+                    activeTabId = chatTabs[0]?.id || null;
+                }
+                
+                saveChatTabs();
                 renderChatTabs();
                 if (activeTabId) {
                     switchToTab(activeTabId);
@@ -183,7 +221,7 @@ function initializeChatTabs() {
 }
 
 function createNewChatTab(title = null) {
-    const tabId = `tab-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const tabId = `tab-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
     const tab = {
         id: tabId,
         title: title || `Chat ${chatTabs.length + 1}`,
@@ -217,8 +255,10 @@ function renderChatTabs() {
             switchToTab(tab.id);
         };
         
+        // Escape HTML to prevent XSS
+        const escapedTitle = tab.title.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
         tabElement.innerHTML = `
-            <span class="chat-tab-title" title="${tab.title}">${tab.title}</span>
+            <span class="chat-tab-title" title="${escapedTitle}">${escapedTitle}</span>
             <button class="chat-tab-close" onclick="closeChatTab('${tab.id}', event)" title="Close tab (Ctrl+W)">×</button>
             <span class="chat-tab-unread"></span>
         `;
@@ -528,6 +568,30 @@ async function loadModels() {
             
             dropdownContent.innerHTML = html;
             
+            // Add event listeners to model items (backup to onclick)
+            setTimeout(() => {
+                dropdownContent.querySelectorAll('.model-item').forEach(item => {
+                    const modelName = item.dataset.model;
+                    if (modelName) {
+                        // Remove existing listeners and add new one with capture phase
+                        item.onclick = null; // Clear first
+                        item.addEventListener('click', (e) => {
+                            e.stopPropagation();
+                            e.preventDefault();
+                            e.stopImmediatePropagation();
+                            selectModel(modelName);
+                            return false;
+                        }, true); // Use capture phase
+                        
+                        // Also add mousedown as backup
+                        item.addEventListener('mousedown', (e) => {
+                            e.stopPropagation();
+                            e.preventDefault();
+                        }, true);
+                    }
+                });
+            }, 100);
+            
             // Also update hidden select for compatibility
             modelSelect.innerHTML = '<option value="">Select a model...</option>';
             for (const [backend, models] of Object.entries(modelsByBackend)) {
@@ -587,11 +651,14 @@ function createBackendFolder(backend, backendInfo_data, models, isFavorite, isEx
     models.forEach(model => {
         const isModelFavorite = favoriteModels.includes(model);
         const isSelected = currentModel === model;
-        html += `<div class="model-item ${isModelFavorite ? 'favorite' : ''} ${isSelected ? 'selected' : ''}" onclick="selectModel('${model}')" data-model="${model}">`;
+        // Escape model name to prevent XSS
+        const escapedModel = model.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+        const escapedModelDisplay = model.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        html += `<div class="model-item ${isModelFavorite ? 'favorite' : ''} ${isSelected ? 'selected' : ''}" onclick="event.stopPropagation(); event.preventDefault(); event.stopImmediatePropagation(); selectModel('${escapedModel}'); return false;" data-model="${escapedModel}" style="cursor: pointer; position: relative; z-index: 1000001;">`;
         if (isModelFavorite) {
             html += `<span class="model-item-favorite-icon">⭐</span>`;
         }
-        html += `<span>${model}</span>`;
+        html += `<span>${escapedModelDisplay}</span>`;
         html += `</div>`;
     });
     
@@ -607,12 +674,32 @@ function toggleBackendFolder(folderId) {
 }
 
 function selectModel(modelName) {
+    if (!modelName) {
+        console.error('No model name provided');
+        return;
+    }
+    
+    console.log('Selecting model:', modelName);
     currentModel = modelName;
-    document.getElementById('modelSelect').value = modelName;
+    
+    const modelSelect = document.getElementById('modelSelect');
+    if (modelSelect) {
+        modelSelect.value = modelName;
+    }
+    
     updateModelSelectDisplay(modelName);
     updateModelInfo();
     closeModelDropdown();
     showToast(`Selected: ${modelName}`, 'success');
+    
+    // Update current tab with selected model
+    if (activeTabId) {
+        const tab = chatTabs.find(t => t.id === activeTabId);
+        if (tab) {
+            tab.model = modelName;
+            saveChatTabs();
+        }
+    }
 }
 
 function updateModelSelectDisplay(modelName) {
@@ -635,12 +722,92 @@ function updateModelSelectDisplay(modelName) {
 function toggleModelDropdown() {
     const dropdown = document.getElementById('modelDropdown');
     const display = document.getElementById('modelSelectDisplay');
+    const container = document.querySelector('.model-select-container');
     
-    if (dropdown && display) {
-        dropdown.classList.toggle('show');
-        display.classList.toggle('active');
+    if (dropdown && display && container) {
+        const isOpen = dropdown.classList.contains('show');
+        
+        // Close all other dropdowns first
+        document.querySelectorAll('.model-dropdown.show').forEach(d => {
+            d.classList.remove('show');
+            d.previousElementSibling?.classList.remove('active');
+        });
+        
+        if (!isOpen) {
+            // Calculate position relative to container
+            const rect = container.getBoundingClientRect();
+            const scrollY = window.scrollY || window.pageYOffset;
+            const scrollX = window.scrollX || window.pageXOffset;
+            
+            dropdown.style.position = 'fixed';
+            dropdown.style.top = (rect.bottom + scrollY + 4) + 'px';
+            dropdown.style.left = (rect.left + scrollX) + 'px';
+            dropdown.style.width = Math.max(rect.width, 280) + 'px';
+            // Use 70vh or available space, whichever is smaller
+            const availableHeight = window.innerHeight - rect.bottom - 20;
+            const maxHeight = Math.min(window.innerHeight * 0.7, availableHeight);
+            dropdown.style.maxHeight = Math.max(maxHeight, 500) + 'px';
+            dropdown.style.minHeight = '500px';
+            dropdown.style.zIndex = '999999';
+            
+            // Ensure dropdown content can scroll
+            const content = dropdown.querySelector('.model-dropdown-content');
+            if (content) {
+                const searchBox = dropdown.querySelector('.model-dropdown-search');
+                const searchHeight = searchBox ? searchBox.offsetHeight : 60;
+                const dropdownMaxHeight = parseInt(dropdown.style.maxHeight);
+                const availableHeight = dropdownMaxHeight - searchHeight - 10; // Account for search box and padding
+                const contentMaxHeight = Math.max(450, availableHeight);
+                content.style.maxHeight = contentMaxHeight + 'px';
+                content.style.minHeight = '450px';
+                content.style.height = 'auto';
+                content.style.overflowY = 'scroll';
+                content.style.overflowX = 'hidden';
+                content.style.flex = '1 1 0';
+                // Force scrollbar to be visible
+                content.style.scrollbarWidth = 'thin';
+            }
+            
+            dropdown.classList.add('show');
+            display.classList.add('active');
+            
+            // Focus search input
+            const searchInput = document.getElementById('modelSearchInput');
+            if (searchInput) {
+                setTimeout(() => searchInput.focus(), 100);
+            }
+        } else {
+            dropdown.classList.remove('show');
+            display.classList.remove('active');
+        }
     }
 }
+
+// Close dropdown when clicking outside (but not on model items or dropdown content)
+document.addEventListener('click', (e) => {
+    const dropdown = document.getElementById('modelDropdown');
+    const display = document.getElementById('modelSelectDisplay');
+    const container = document.querySelector('.model-select-container');
+    
+    // Don't close if clicking inside the dropdown or on model items
+    if (dropdown && dropdown.contains(e.target)) {
+        // Check if it's a model item click - if so, let it handle itself
+        const modelItem = e.target.closest('.model-item');
+        if (modelItem) {
+            // Don't close, let the model item's onclick handle it
+            return;
+        }
+        // Otherwise, it's a click inside dropdown but not on model item (e.g., search box)
+        return;
+    }
+    
+    // Click was outside dropdown - close it
+    if (dropdown && display && container) {
+        if (!container.contains(e.target) && dropdown.classList.contains('show')) {
+            closeModelDropdown();
+        }
+    }
+});
 
 function closeModelDropdown() {
     const dropdown = document.getElementById('modelDropdown');
@@ -689,13 +856,7 @@ function filterModelDropdown(searchTerm) {
     });
 }
 
-// Close dropdown when clicking outside
-document.addEventListener('click', (e) => {
-    const container = document.querySelector('.model-select-container');
-    if (container && !container.contains(e.target)) {
-        closeModelDropdown();
-    }
-});
+// Removed duplicate click handler - handled above
 
 // Model recommendations based on task
 const modelRecommendations = {
@@ -792,27 +953,53 @@ function setupEventListeners() {
     const conversationsSearch = document.getElementById('conversationsSearch');
     
     // Model selection (for hidden select compatibility)
-    modelSelect.addEventListener('change', (e) => {
-        currentModel = e.target.value;
-        updateModelSelectDisplay(currentModel);
-        updateModelInfo();
-    });
+    if (modelSelect) {
+        modelSelect.addEventListener('change', (e) => {
+            currentModel = e.target.value;
+            updateModelSelectDisplay(currentModel);
+            updateModelInfo();
+        });
+    }
     
-    // Send button
-    sendButton.addEventListener('click', sendMessage);
-    
-    // Enter key to send (Shift+Enter for new line)
-    chatInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
+    // Send button - prevent duplicate listeners
+    if (sendButton._handleClick) {
+        sendButton.removeEventListener('click', sendButton._handleClick);
+    }
+    sendButton._handleClick = (e) => {
+        e.preventDefault();
+        if (!isSending) {
             sendMessage();
         }
-    });
+    };
+    sendButton.addEventListener('click', sendButton._handleClick);
+    
+    // Enter key to send (Shift+Enter for new line) - prevent duplicate listeners
+    // Store handler reference for cleanup
+    if (chatInput._handleEnterKey) {
+        chatInput.removeEventListener('keydown', chatInput._handleEnterKey);
+    }
+    chatInput._handleEnterKey = (e) => {
+        if (e.key === 'Enter' && !e.shiftKey && !isSending) {
+            e.preventDefault();
+            e.stopPropagation();
+            sendMessage();
+        }
+    };
+    chatInput.addEventListener('keydown', chatInput._handleEnterKey);
     
     // Auto-resize textarea
     chatInput.addEventListener('input', () => {
         chatInput.style.height = 'auto';
-        chatInput.style.height = chatInput.scrollHeight + 'px';
+        const newHeight = Math.min(chatInput.scrollHeight, 200); // Max 200px
+        chatInput.style.height = newHeight + 'px';
+    });
+    
+    // Ensure Enter key works - add additional listener as backup
+    chatInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey && !isSending) {
+            e.preventDefault();
+            sendMessage();
+        }
     });
     
     // Keyboard shortcuts
@@ -1045,7 +1232,8 @@ async function sendEnsembleMessage(prompt) {
     
     // Get settings
     const temperature = parseFloat(document.getElementById('temperature').value);
-    const systemPrompt = document.getElementById('systemPrompt').value || undefined;
+    const systemPromptEl = document.getElementById('systemPrompt');
+    const systemPrompt = systemPromptEl ? systemPromptEl.value || undefined : undefined;
     const method = document.getElementById('ensembleMethod')?.value || 'majority_vote';
     
     try {
@@ -1217,10 +1405,23 @@ async function routeToBestModel(prompt) {
 
 // Send message
 async function sendMessage() {
+    // Prevent duplicate sends
+    if (isSending) {
+        return;
+    }
+    
     const chatInput = document.getElementById('chatInput');
+    if (!chatInput) {
+        console.error('Chat input element not found');
+        return;
+    }
+    
     const message = chatInput.value.trim();
     
     if (!message) return;
+    
+    // Set sending flag
+    isSending = true;
     
     // Check if comparison mode is active
     if (comparisonMode && comparisonModels.length >= 2) {
@@ -1230,6 +1431,7 @@ async function sendMessage() {
         } else {
             await sendComparisonMessage(message);
         }
+        isSending = false;
         return;
     }
     
@@ -1240,6 +1442,7 @@ async function sendMessage() {
     
     if (!currentModel) {
         showToast('Please select a model first', 'error');
+        isSending = false;
         return;
     }
     
@@ -1259,7 +1462,8 @@ async function sendMessage() {
     
     // Get settings
     const temperature = parseFloat(document.getElementById('temperature').value);
-    const systemPrompt = document.getElementById('systemPrompt').value || undefined;
+    const systemPromptEl = document.getElementById('systemPrompt');
+    const systemPrompt = systemPromptEl ? systemPromptEl.value || undefined : undefined;
     const streamMode = document.getElementById('streamMode').checked;
     
     try {
@@ -1289,6 +1493,7 @@ async function sendMessage() {
         showToast(`Failed to send message: ${errorMsg}`, 'error', 5000);
     } finally {
         // Re-enable input
+        isSending = false;
         chatInput.disabled = false;
         sendButton.disabled = false;
         sendButton.innerHTML = '<span>Send</span>';
@@ -1329,18 +1534,27 @@ async function sendMessageNormal(prompt, temperature, systemPrompt) {
     const data = await response.json();
     
     if (data.status === 'ok') {
-        addMessage('assistant', data.response);
+        // Handle both data.data.response and data.response formats
+        const responseData = data.data || data;
+        const responseText = responseData.response;
+        
+        if (!responseText) {
+            throw new Error('No response received from server');
+        }
+        
+        addMessage('assistant', responseText);
         
         // Show performance metrics if available
-        if (data.metadata && data.metadata.response_time) {
-            const metrics = data.metadata;
-            const metricsText = `\n\n*Response time: ${metrics.response_time}s | Length: ${metrics.response_length} chars*`;
+        const metadata = responseData.metadata || data.metadata;
+        if (metadata && metadata.response_time) {
+            const metricsText = `\n\n*Response time: ${metadata.response_time}s | Length: ${metadata.response_length || responseText.length} chars*`;
             // Could append to message or show in a tooltip
         }
         
         // Update conversation ID if returned
-        if (data.conversation_id) {
-            currentConversationId = data.conversation_id;
+        const convId = responseData.conversation_id || data.conversation_id;
+        if (convId) {
+            currentConversationId = convId;
             
             // Update current tab with conversation ID
             if (activeTabId) {
@@ -1353,86 +1567,130 @@ async function sendMessageNormal(prompt, temperature, systemPrompt) {
             await loadConversations(); // Refresh list
         }
     } else {
-        throw new Error(data.message || 'Unknown error');
+        const errorMsg = data.message || data.data?.message || 'Unknown error';
+        throw new Error(errorMsg);
     }
 }
 
 // Send message (streaming mode)
 async function sendMessageStream(prompt, temperature, systemPrompt) {
-    const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-            prompt,
-            model: currentModel,
-            temperature,
-            system_prompt: systemPrompt,
-            stream: true,
-            conversation_id: currentConversationId,
-            unrestricted_mode: unrestrictedMode
-        })
-    });
-    
-    if (!response.ok) {
-        throw new Error('Stream request failed');
-    }
-    
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let assistantMessageId = null;
-    
-    while (true) {
-        const { done, value } = await reader.read();
+    try {
+        const response = await fetch('/api/chat', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                prompt,
+                model: currentModel,
+                temperature,
+                system_prompt: systemPrompt,
+                stream: true,
+                conversation_id: currentConversationId,
+                unrestricted_mode: unrestrictedMode
+            })
+        });
         
-        if (done) break;
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(errorText || 'Stream request failed');
+        }
         
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop();
+        if (!response.body) {
+            throw new Error('No response body received');
+        }
         
-        for (const line of lines) {
-            if (line.startsWith('data: ')) {
-                try {
-                    const data = JSON.parse(line.slice(6));
-                    
-                    if (data.chunk) {
-                        if (!assistantMessageId) {
-                            assistantMessageId = addMessage('assistant', '', true);
-                        }
-                        appendToMessage(assistantMessageId, data.chunk);
-                    }
-                    
-                    if (data.done) {
-                        // Update conversation ID if returned
-                        if (data.conversation_id) {
-                            currentConversationId = data.conversation_id;
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let assistantMessageId = null;
+        
+        while (true) {
+            const { done, value } = await reader.read();
             
-            // Update current tab with conversation ID
-            if (activeTabId) {
-                const tab = chatTabs.find(t => t.id === activeTabId);
-                if (tab) {
-                    tab.conversationId = currentConversationId;
-                    saveChatTabs();
+            if (done) {
+                // Handle any remaining buffer
+                if (buffer.trim() && !assistantMessageId) {
+                    assistantMessageId = addMessage('assistant', buffer.trim(), false);
                 }
+                break;
             }
-                            loadConversations(); // Refresh list
+            
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+            
+            for (const line of lines) {
+                if (!line.trim()) continue;
+                
+                if (line.startsWith('data: ')) {
+                    try {
+                        const jsonStr = line.slice(6).trim();
+                        if (!jsonStr) continue;
+                        
+                        const data = JSON.parse(jsonStr);
+                        
+                        if (data.chunk) {
+                            if (!assistantMessageId) {
+                                assistantMessageId = addMessage('assistant', '', true);
+                            }
+                            appendToMessage(assistantMessageId, data.chunk);
                         }
-                        return;
+                        
+                        if (data.done) {
+                            // Update conversation ID if returned
+                            if (data.conversation_id) {
+                                currentConversationId = data.conversation_id;
+                                
+                                // Update current tab with conversation ID
+                                if (activeTabId) {
+                                    const tab = chatTabs.find(t => t.id === activeTabId);
+                                    if (tab) {
+                                        tab.conversationId = currentConversationId;
+                                        saveChatTabs();
+                                    }
+                                }
+                                loadConversations(); // Refresh list
+                            }
+                            return;
+                        }
+                    } catch (e) {
+                        console.error('Error parsing stream data:', e, 'Line:', line);
+                        // Continue processing other lines
                     }
-                } catch (e) {
-                    console.error('Error parsing stream data:', e);
+                } else if (line.trim()) {
+                    // Handle non-SSE format (plain text streaming)
+                    if (!assistantMessageId) {
+                        assistantMessageId = addMessage('assistant', '', true);
+                    }
+                    if (assistantMessageId) {
+                        appendToMessage(assistantMessageId, line);
+                    }
                 }
             }
         }
+        
+        // If we got data but no done signal, ensure message is created
+        if (buffer.trim() && !assistantMessageId) {
+            assistantMessageId = addMessage('assistant', buffer.trim(), false);
+        }
+    } catch (error) {
+        console.error('Stream error:', error);
+        // Show error to user
+        if (!assistantMessageId) {
+            addMessage('assistant', `Error: ${error.message || 'Failed to get response. Please try again.'}`, false);
+        }
+        throw error;
     }
 }
 
 // Add message to chat
 function addMessage(role, text, isStreaming = false) {
     const chatMessages = document.getElementById('chatMessages');
+    if (!chatMessages) {
+        console.error('Chat messages container not found');
+        return null;
+    }
     
     // Remove welcome message if present
     const welcomeMessage = chatMessages.querySelector('.welcome-message');
@@ -1538,8 +1796,11 @@ function appendToMessage(messageId, chunk) {
             copyBtn.onclick = () => copyMessage(newText, copyBtn);
         }
         
+        // Auto-scroll to bottom
         const chatMessages = document.getElementById('chatMessages');
-        chatMessages.scrollTop = chatMessages.scrollHeight;
+        if (chatMessages) {
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
     }
 }
 
@@ -2374,6 +2635,20 @@ async function deleteConversation(convId) {
                 const chatMessages = document.getElementById('chatMessages');
                 chatMessages.innerHTML = '<div class="welcome-message"><h2>Welcome to LocalMind</h2><p>Select a model and start chatting! Your conversations stay local and private.</p></div>';
             }
+            
+            // Remove from chat tabs if it exists
+            chatTabs = chatTabs.filter(tab => tab.conversationId !== convId);
+            if (activeTabId && chatTabs.find(tab => tab.id === activeTabId)?.conversationId === convId) {
+                // Switch to first available tab or create new one
+                if (chatTabs.length > 0) {
+                    activeTabId = chatTabs[0].id;
+                } else {
+                    createNewChatTab();
+                }
+            }
+            saveChatTabs();
+            renderChatTabs();
+            
             await loadConversations();
             showNotification('Conversation deleted', 'success');
         }
@@ -3758,7 +4033,8 @@ async function sendComparisonMessage(prompt) {
     
     // Get settings
     const temperature = parseFloat(document.getElementById('temperature').value);
-    const systemPrompt = document.getElementById('systemPrompt').value || undefined;
+    const systemPromptEl = document.getElementById('systemPrompt');
+    const systemPrompt = systemPromptEl ? systemPromptEl.value || undefined : undefined;
     
     try {
         const response = await fetch('/api/chat/compare', {
@@ -3902,7 +4178,8 @@ async function sendEnsembleMessage(prompt) {
     
     // Get settings
     const temperature = parseFloat(document.getElementById('temperature').value);
-    const systemPrompt = document.getElementById('systemPrompt').value || undefined;
+    const systemPromptEl = document.getElementById('systemPrompt');
+    const systemPrompt = systemPromptEl ? systemPromptEl.value || undefined : undefined;
     const method = document.getElementById('ensembleMethod')?.value || 'majority_vote';
     
     try {
@@ -4740,4 +5017,132 @@ function deleteCustomTemplate(index, event) {
         showToast('Template deleted', 'success');
     }
 }
+
+// Collapsible sections
+function initializeCollapsibleSections() {
+    // Expand all sections by default
+    const sections = ['modelSection', 'settingsSection', 'promptSection', 'comparisonSection'];
+    sections.forEach(sectionId => {
+        const section = document.getElementById(sectionId);
+        if (section) {
+            section.classList.remove('collapsed');
+        }
+    });
+}
+
+function toggleSection(sectionId) {
+    if (!sectionId) return;
+    
+    const section = document.getElementById(sectionId);
+    if (!section) {
+        console.warn('Section not found:', sectionId);
+        return;
+    }
+    
+    const header = section.previousElementSibling;
+    if (header && header.classList.contains('section-header')) {
+        section.classList.toggle('collapsed');
+        header.classList.toggle('collapsed');
+    }
+}
+
+// Header dropdown menu
+function toggleHeaderMenu() {
+    const dropdown = document.getElementById('headerDropdown');
+    if (dropdown) {
+        dropdown.classList.toggle('show');
+    }
+}
+
+function closeHeaderMenu() {
+    const dropdown = document.getElementById('headerDropdown');
+    if (dropdown) {
+        dropdown.classList.remove('show');
+    }
+}
+
+// Close dropdown when clicking outside
+document.addEventListener('click', (e) => {
+    const menu = document.getElementById('headerMenuBtn');
+    const dropdown = document.getElementById('headerDropdown');
+    if (menu && dropdown && !menu.contains(e.target) && !dropdown.contains(e.target)) {
+        closeHeaderMenu();
+    }
+    
+    // Close chat menu when clicking outside
+    const chatMenu = document.getElementById('chatMenuBtn');
+    const chatDropdown = document.getElementById('chatMenuDropdown');
+    if (chatMenu && chatDropdown && !chatMenu.contains(e.target) && !chatDropdown.contains(e.target)) {
+        closeChatMenu();
+    }
+});
+
+// Chat menu functions
+function toggleChatMenu() {
+    const dropdown = document.getElementById('chatMenuDropdown');
+    if (dropdown) {
+        dropdown.classList.toggle('show');
+    }
+}
+
+function closeChatMenu() {
+    const dropdown = document.getElementById('chatMenuDropdown');
+    if (dropdown) {
+        dropdown.classList.remove('show');
+    }
+}
+
+// Sidebar toggle
+let sidebarCollapsed = false;
+function toggleSidebar() {
+    const sidebar = document.querySelector('.sidebar');
+    const icon = document.getElementById('sidebarToggleIcon');
+    
+    if (sidebar) {
+        sidebar.classList.toggle('collapsed');
+        sidebarCollapsed = !sidebarCollapsed;
+        if (icon) {
+            icon.textContent = sidebarCollapsed ? '◀' : '▶';
+        }
+        localStorage.setItem('sidebarCollapsed', sidebarCollapsed);
+    }
+}
+
+// Conversations sidebar toggle
+let conversationsCollapsed = false;
+function toggleConversationsSidebar() {
+    const sidebar = document.getElementById('conversationsSidebar');
+    const icon = document.getElementById('conversationsToggleIcon');
+    
+    if (sidebar) {
+        sidebar.classList.toggle('collapsed');
+        conversationsCollapsed = !conversationsCollapsed;
+        if (icon) {
+            icon.textContent = conversationsCollapsed ? '▶' : '◀';
+        }
+        localStorage.setItem('conversationsCollapsed', conversationsCollapsed);
+    }
+}
+
+// Restore sidebar states on load
+document.addEventListener('DOMContentLoaded', () => {
+    const sidebarCollapsedState = localStorage.getItem('sidebarCollapsed') === 'true';
+    const conversationsCollapsedState = localStorage.getItem('conversationsCollapsed') === 'true';
+    
+    if (sidebarCollapsedState) {
+        const sidebar = document.querySelector('.sidebar');
+        const icon = document.getElementById('sidebarToggleIcon');
+        if (sidebar) sidebar.classList.add('collapsed');
+        if (icon) icon.textContent = '◀';
+        sidebarCollapsed = true;
+    }
+    
+    if (conversationsCollapsedState) {
+        const sidebar = document.getElementById('conversationsSidebar');
+        const icon = document.getElementById('conversationsToggleIcon');
+        if (sidebar) sidebar.classList.add('collapsed');
+        if (icon) icon.textContent = '▶';
+        conversationsCollapsed = true;
+    }
+});
 

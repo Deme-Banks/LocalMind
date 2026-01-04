@@ -19,7 +19,6 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-MANIFEST
 
 # Virtual Environment
 venv/
@@ -48,7 +47,6 @@ plugins/
 *.key
 *.pem
 config.yaml
-!config.yaml.example
 
 # OS
 Thumbs.db
@@ -60,7 +58,18 @@ Thumbs.db
 htmlcov/
 .tox/
 
-# Temporary files
-*.tmp
-*.bak
-*.swp
+# Git
+.git/
+.gitignore
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# Scripts
+scripts/
+
+# Tests
+tests/
+

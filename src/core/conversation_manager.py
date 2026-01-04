@@ -152,11 +152,30 @@ class ConversationManager:
             logger.error(f"Error saving message to conversation {conv_id}: {e}")
             return
         
-        # Update index
+        # Update index - only add/keep if conversation has at least one user and one assistant message
         index = self._load_index()
-        if conv_id in index:
-            index[conv_id]["updated_at"] = conversation["updated_at"]
-            index[conv_id]["message_count"] = len(conversation["messages"])
+        user_messages = [m for m in conversation["messages"] if m.get("role") == "user"]
+        assistant_messages = [m for m in conversation["messages"] if m.get("role") == "assistant"]
+        
+        # Only add to index if there's at least one user message and one assistant message
+        if len(user_messages) > 0 and len(assistant_messages) > 0:
+            if conv_id in index:
+                index[conv_id]["updated_at"] = conversation["updated_at"]
+                index[conv_id]["message_count"] = len(conversation["messages"])
+            else:
+                # Add to index only if it has both user and assistant messages
+                index[conv_id] = {
+                    "id": conv_id,
+                    "title": conversation["title"],
+                    "model": conversation.get("model"),
+                    "created_at": conversation.get("created_at", conversation["updated_at"]),
+                    "updated_at": conversation["updated_at"],
+                    "message_count": len(conversation["messages"])
+                }
+            self._save_index(index)
+        elif conv_id in index:
+            # Remove from index if it no longer has both message types
+            del index[conv_id]
             self._save_index(index)
     
     def get_conversation(self, conv_id: str) -> Optional[Dict[str, Any]]:
@@ -194,6 +213,33 @@ class ConversationManager:
         """
         index = self._load_index()
         conversations = []
+        
+        # Clean up index - remove conversations that don't exist or have no messages
+        index_to_remove = []
+        for conv_id, conv_info in index.items():
+            conv_file = self.conversations_dir / f"{conv_id}.json"
+            if not conv_file.exists():
+                index_to_remove.append(conv_id)
+                continue
+            
+            # Check if conversation has actual messages
+            try:
+                with open(conv_file, 'r', encoding='utf-8') as f:
+                    conv_data = json.load(f)
+                user_messages = [m for m in conv_data.get("messages", []) if m.get("role") == "user"]
+                assistant_messages = [m for m in conv_data.get("messages", []) if m.get("role") == "assistant"]
+                if len(user_messages) == 0 or len(assistant_messages) == 0:
+                    index_to_remove.append(conv_id)
+            except Exception:
+                index_to_remove.append(conv_id)
+        
+        # Remove invalid conversations from index
+        if index_to_remove:
+            for conv_id in index_to_remove:
+                if conv_id in index:
+                    del index[conv_id]
+            if index_to_remove:
+                self._save_index(index)
         
         for conv_id, conv_info in index.items():
             # Apply search filter

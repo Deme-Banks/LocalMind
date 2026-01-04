@@ -2,6 +2,9 @@
 REM LocalMind Web Server Control Script
 REM This script starts the LocalMind web interface with multiple AI backends
 
+REM Change to project root directory (parent of scripts folder)
+cd /d "%~dp0.."
+
 echo ========================================
 echo   LocalMind Web Server
 echo   Multi-Backend AI Assistant
@@ -50,6 +53,8 @@ echo   - Local AI models (Ollama)
 echo   - API models (ChatGPT, Claude, Gemini, etc.)
 echo   - Model management and downloads
 echo   - Professional web interface
+echo   - Text-to-Video generation (Sora, Runway, Pika)
+echo   - Real-time progress updates
 echo.
 echo The web interface will be available at:
 echo   - Local:    http://localhost:5000
@@ -59,6 +64,11 @@ echo API Configuration:
 echo   - Configure APIs: python main.py configure
 echo   - Or visit: http://localhost:5000/configure
 echo   - See API_CONFIGURATION.md for more info
+echo.
+echo Video Generation:
+echo   - Visit: http://localhost:5000/video
+echo   - Supports Sora 2, Runway ML, Pika Labs
+echo   - Real-time progress tracking
 echo.
 echo Press Ctrl+C to stop the server
 echo.
