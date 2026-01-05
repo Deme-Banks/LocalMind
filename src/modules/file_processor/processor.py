@@ -91,7 +91,7 @@ class FileProcessorModule(BaseModule):
                 prompt=enhanced_prompt,
                 model=model,
                 temperature=temperature,
-                system_prompt="You are a file processing assistant. Help users read, write, analyze, and transform files safely and efficiently."
+                system_prompt="You are a file processing assistant."
             )
             
             return ModuleResponse(

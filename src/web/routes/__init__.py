@@ -11,6 +11,7 @@ from .webhook_routes import setup_webhook_routes
 from .conversation_routes import setup_conversation_routes
 from .additional_routes import setup_additional_routes
 from .video_routes import setup_video_routes
+from .code_execution_routes import setup_code_execution_routes
 
 __all__ = [
     'setup_chat_routes',
@@ -21,5 +22,6 @@ __all__ = [
     'setup_conversation_routes',
     'setup_additional_routes',
     'setup_video_routes',
+    'setup_code_execution_routes',
 ]
 

@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Code Execution - LocalMind</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=2.7">
+    <!-- Code Editor -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/theme/monokai.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/mode/python/python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/mode/javascript/javascript.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/mode/clike/clike.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/mode/shell/shell.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/mode/shell/bash.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/addon/edit/matchbrackets.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/addon/edit/closebrackets.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/addon/selection/active-line.min.js"></script>
+    <!-- Code highlighting for output -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-content">
+                <h1>💻 Code Execution</h1>
+                <p class="subtitle">Run code in a sandboxed environment</p>
+            </div>
+            <div class="header-navigation" style="display: flex; gap: 0.5rem; margin: 0 1rem;">
+                <a href="/" class="btn btn-secondary" style="text-decoration: none; padding: 0.5rem 1rem;">
+                    <span>💬</span> AI Chat
+                </a>
+                <a href="/video" class="btn btn-secondary" style="text-decoration: none; padding: 0.5rem 1rem;">
+                    <span>🎬</span> Text to Video
+                </a>
+                <a href="/code" class="btn btn-primary" style="text-decoration: none; padding: 0.5rem 1rem;">
+                    <span>💻</span> Code Execution
+                </a>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="main-content" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-top: 2rem;">
+            <!-- Left Panel: Code Editor -->
+            <div class="code-panel" style="display: flex; flex-direction: column; gap: 1rem;">
+                <div class="panel-header" style="display: flex; justify-content: space-between; align-items: center;">
+                    <h2 style="margin: 0; color: var(--text-primary);">Code Editor</h2>
+                    <div style="display: flex; gap: 0.5rem;">
+                        <select id="languageSelect" class="model-select" style="padding: 0.5rem; border: 1px solid var(--border-color); border-radius: 0.375rem; background: var(--background); color: var(--text-primary);">
+                            <option value="python">Python</option>
+                            <option value="javascript">JavaScript</option>
+                        </select>
+                        <button id="detectLanguageBtn" class="btn btn-secondary btn-small" title="Auto-detect language">
+                            🔍 Detect
+                        </button>
+                    </div>
+                </div>
+                
+                <div id="codeEditor" style="border: 1px solid var(--border-color); border-radius: 0.375rem; overflow: hidden; min-height: 400px;"></div>
+                
+                <div class="editor-controls" style="display: flex; justify-content: space-between; align-items: center; gap: 1rem;">
+                    <div style="display: flex; gap: 0.5rem;">
+                        <button id="runCodeBtn" class="btn btn-primary">
+                            ▶️ Run Code
+                        </button>
+                        <button id="clearCodeBtn" class="btn btn-secondary">
+                            🗑️ Clear
+                        </button>
+                        <button id="loadTemplateBtn" class="btn btn-secondary">
+                            📋 Templates
+                        </button>
+                    </div>
+                    <div style="display: flex; gap: 0.5rem; align-items: center;">
+                        <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.875rem; color: var(--text-secondary);">
+                            Timeout (s):
+                            <input type="number" id="timeoutInput" value="30" min="1" max="300" style="width: 60px; padding: 0.25rem; border: 1px solid var(--border-color); border-radius: 0.25rem; background: var(--background); color: var(--text-primary);">
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Code Templates -->
+                <div id="templatesPanel" style="display: none; border: 1px solid var(--border-color); border-radius: 0.375rem; padding: 1rem; background: var(--background-secondary);">
+                    <h3 style="margin-top: 0; color: var(--text-primary);">Code Templates</h3>
+                    <div id="templatesList" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 0.5rem;">
+                        <!-- Templates will be loaded here -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Panel: Output & History -->
+            <div class="output-panel" style="display: flex; flex-direction: column; gap: 1rem;">
+                <!-- Output Display -->
+                <div class="output-section">
+                    <div class="panel-header" style="display: flex; justify-content: space-between; align-items: center;">
+                        <h2 style="margin: 0; color: var(--text-primary);">Output</h2>
+                        <button id="clearOutputBtn" class="btn btn-secondary btn-small">
+                            🗑️ Clear
+                        </button>
+                    </div>
+                    <div id="outputDisplay" style="border: 1px solid var(--border-color); border-radius: 0.375rem; padding: 1rem; min-height: 200px; max-height: 400px; overflow-y: auto; background: var(--background-secondary); font-family: 'Courier New', monospace; white-space: pre-wrap; word-wrap: break-word;">
+                        <p style="color: var(--text-secondary); margin: 0;">Output will appear here...</p>
+                    </div>
+                </div>
+
+                <!-- Execution History -->
+                <div class="history-section">
+                    <div class="panel-header" style="display: flex; justify-content: space-between; align-items: center;">
+                        <h2 style="margin: 0; color: var(--text-primary);">Execution History</h2>
+                        <button id="clearHistoryBtn" class="btn btn-secondary btn-small">
+                            🗑️ Clear
+                        </button>
+                    </div>
+                    <div id="historyList" style="border: 1px solid var(--border-color); border-radius: 0.375rem; padding: 1rem; max-height: 300px; overflow-y: auto; background: var(--background-secondary);">
+                        <p style="color: var(--text-secondary); margin: 0; text-align: center;">No execution history yet</p>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/code.js') }}?v=1.0"></script>
+    <script src="{{ url_for('static', filename='js/app.js') }}?v=3.0"></script>
+</body>
+</html>
+

@@ -86,7 +86,7 @@ class TextGeneratorModule(BaseModule):
                 prompt=enhanced_prompt,
                 model=model,
                 temperature=temperature,
-                system_prompt="You are a creative writing assistant. Generate engaging, well-written content that matches the user's request."
+                system_prompt="You are a creative writing assistant."
             )
             
             return ModuleResponse(

@@ -22,12 +22,35 @@ def setup_conversation_routes(app: Flask, server_instance):
     
     @app.route("/api/conversations", methods=["GET"])
     def api_list_conversations():
-        """List all conversations"""
+        """List all conversations with pagination support"""
         try:
             search = request.args.get("search", None)
             limit = request.args.get("limit", type=int)
-            conversations = server_instance.conversation_manager.list_conversations(limit=limit, search=search)
-            return jsonify(success_response({"conversations": conversations}))
+            page = request.args.get("page", type=int, default=1)
+            per_page = request.args.get("per_page", type=int, default=50)
+            
+            # Get all conversations (or filtered)
+            all_conversations = server_instance.conversation_manager.list_conversations(limit=None, search=search)
+            
+            # Calculate pagination
+            total = len(all_conversations)
+            start = (page - 1) * per_page
+            end = start + per_page
+            paginated_conversations = all_conversations[start:end]
+            
+            # Apply limit if specified (for backward compatibility)
+            if limit:
+                paginated_conversations = paginated_conversations[:limit]
+            
+            return jsonify(success_response({
+                "conversations": paginated_conversations,
+                "pagination": {
+                    "page": page,
+                    "per_page": per_page,
+                    "total": total,
+                    "pages": (total + per_page - 1) // per_page if per_page > 0 else 0
+                }
+            }))
         except Exception as e:
             logger.error(f"Error listing conversations: {e}")
             return jsonify(error_response(str(e), status_code=500)), 500

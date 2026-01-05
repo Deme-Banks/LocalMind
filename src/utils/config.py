@@ -275,6 +275,18 @@ class ConfigManager:
                         "timeout": 300
                     }
                 ),
+                "sora2": BackendConfig(
+                    type="sora2",
+                    enabled=False,
+                    settings={
+                        "api_key": os.getenv("OPENAI_API_KEY", "") or os.getenv("SORA2_API_KEY", ""),
+                        "base_url": os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+                        "video_storage_path": os.path.join(os.getcwd(), "videos"),
+                        "timeout": 300,
+                        "use_third_party": os.getenv("SORA2_USE_THIRD_PARTY", "false").lower() == "true",
+                        "third_party_url": os.getenv("SORA2_THIRD_PARTY_URL", "")
+                    }
+                ),
                 "runway": BackendConfig(
                     type="runway",
                     enabled=False,
@@ -291,6 +303,46 @@ class ConfigManager:
                     settings={
                         "api_key": os.getenv("PIKA_API_KEY", ""),
                         "base_url": os.getenv("PIKA_BASE_URL", "https://api.pika.art/v1"),
+                        "video_storage_path": os.path.join(os.getcwd(), "videos"),
+                        "timeout": 300
+                    }
+                ),
+                "stability": BackendConfig(
+                    type="stability",
+                    enabled=False,
+                    settings={
+                        "api_key": os.getenv("STABILITY_API_KEY", ""),
+                        "base_url": os.getenv("STABILITY_BASE_URL", "https://api.stability.ai/v2beta"),
+                        "video_storage_path": os.path.join(os.getcwd(), "videos"),
+                        "timeout": 300
+                    }
+                ),
+                "kling": BackendConfig(
+                    type="kling",
+                    enabled=False,
+                    settings={
+                        "api_key": os.getenv("KLING_API_KEY", ""),
+                        "base_url": os.getenv("KLING_BASE_URL", "https://api.klingai.com/v1"),
+                        "video_storage_path": os.path.join(os.getcwd(), "videos"),
+                        "timeout": 300
+                    }
+                ),
+                "luma": BackendConfig(
+                    type="luma",
+                    enabled=False,
+                    settings={
+                        "api_key": os.getenv("LUMA_API_KEY", ""),
+                        "base_url": os.getenv("LUMA_BASE_URL", "https://api.lumalabs.ai/v1"),
+                        "video_storage_path": os.path.join(os.getcwd(), "videos"),
+                        "timeout": 300
+                    }
+                ),
+                "haiper": BackendConfig(
+                    type="haiper",
+                    enabled=False,
+                    settings={
+                        "api_key": os.getenv("HAIPER_API_KEY", ""),
+                        "base_url": os.getenv("HAIPER_BASE_URL", "https://api.haiper.ai/v1"),
                         "video_storage_path": os.path.join(os.getcwd(), "videos"),
                         "timeout": 300
                     }

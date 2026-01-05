@@ -242,4 +242,137 @@ def setup_config_routes(app: Flask, server_instance):
         except Exception as e:
             logger.error(f"Error restoring backup: {e}", exc_info=True)
             return jsonify(error_response(str(e), status_code=500)), 500
+    
+    @app.route("/api/config/video-providers", methods=["GET"])
+    def api_get_video_providers():
+        """Get list of video providers and their configuration status"""
+        try:
+            config = server_instance.config_manager.get_config()
+            providers = []
+            
+            video_provider_info = {
+                "sora": {
+                    "display_name": "OpenAI Sora",
+                    "setup_url": "https://platform.openai.com/api-keys",
+                    "env_var": "OPENAI_API_KEY",
+                    "description": "OpenAI's original Sora text-to-video model"
+                },
+                "sora2": {
+                    "display_name": "OpenAI Sora 2",
+                    "setup_url": "https://platform.openai.com/api-keys",
+                    "env_var": "OPENAI_API_KEY",
+                    "description": "OpenAI's Sora 2 - Enhanced video generation with synchronized audio and cinematic controls"
+                },
+                "runway": {
+                    "display_name": "Runway ML",
+                    "setup_url": "https://app.runwayml.com/api/settings",
+                    "env_var": "RUNWAY_API_KEY",
+                    "description": "Runway Gen-3 and Gen-2 video generation"
+                },
+                "pika": {
+                    "display_name": "Pika Labs",
+                    "setup_url": "https://pika.art/",
+                    "env_var": "PIKA_API_KEY",
+                    "description": "Pika Labs video generation"
+                },
+                "stability": {
+                    "display_name": "Stability AI",
+                    "setup_url": "https://platform.stability.ai/account/api-keys",
+                    "env_var": "STABILITY_API_KEY",
+                    "description": "Stable Video Diffusion models"
+                },
+                "kling": {
+                    "display_name": "Kling AI",
+                    "setup_url": "https://klingai.com/",
+                    "env_var": "KLING_API_KEY",
+                    "description": "Kling AI video generation"
+                },
+                "luma": {
+                    "display_name": "Luma AI",
+                    "setup_url": "https://lumalabs.ai/",
+                    "env_var": "LUMA_API_KEY",
+                    "description": "Luma Dream Machine video generation"
+                },
+                "haiper": {
+                    "display_name": "Haiper",
+                    "setup_url": "https://haiper.ai/",
+                    "env_var": "HAIPER_API_KEY",
+                    "description": "Haiper AI video generation"
+                }
+            }
+            
+            for name, info in video_provider_info.items():
+                backend_config = config.video_backends.get(name)
+                # Check encrypted storage first, then env, then config
+                api_key = server_instance.key_manager.decrypt_key(f"video_{name}") or os.getenv(info["env_var"]) or (backend_config.settings.get("api_key", "") if backend_config else "")
+                
+                providers.append({
+                    "name": name,
+                    "display_name": info["display_name"],
+                    "setup_url": info["setup_url"],
+                    "description": info["description"],
+                    "env_var": info["env_var"],
+                    "enabled": backend_config.enabled if backend_config else False,
+                    "api_key": api_key if api_key else None,
+                    "has_api_key": bool(api_key),
+                    "encrypted": server_instance.key_manager.has_key(f"video_{name}")
+                })
+            
+            return jsonify(success_response({"providers": providers}))
+        except Exception as e:
+            logger.error(f"Error getting video providers: {e}", exc_info=True)
+            return jsonify(error_response(str(e), status_code=500)), 500
+    
+    @app.route("/api/config/video-providers", methods=["POST"])
+    def api_save_video_provider():
+        """Save video provider configuration"""
+        try:
+            data = request.get_json()
+            if not data:
+                return jsonify(error_response("No data provided", status_code=400, error_type="validation")), 400
+            
+            provider_name = data.get("provider")
+            api_key = data.get("api_key")
+            enabled = data.get("enabled", False)
+            
+            if not provider_name:
+                return jsonify(error_response("Provider name required", status_code=400, error_type="validation")), 400
+            
+            config = server_instance.config_manager.get_config()
+            
+            if provider_name not in config.video_backends:
+                from ...utils.config import BackendConfig
+                config.video_backends[provider_name] = BackendConfig(
+                    type=provider_name,
+                    enabled=False,
+                    settings={}
+                )
+            
+            backend_config = config.video_backends[provider_name]
+            
+            # Encrypt and store API key
+            if api_key:
+                server_instance.key_manager.encrypt_key(api_key, f"video_{provider_name}")
+                # Also store in config for backward compatibility
+                backend_config.settings["api_key"] = api_key
+            
+            backend_config.enabled = enabled
+            
+            server_instance.config_manager.config = config
+            server_instance.config_manager.save_config()
+            
+            # Audit log
+            from ...core.audit_logger import AuditEventType
+            server_instance.audit_logger.log(
+                AuditEventType.API_KEY_UPDATE,
+                ip_address=request.remote_addr or "unknown",
+                details={"provider": f"video_{provider_name}", "action": "configured"}
+            )
+            
+            return jsonify(success_response({
+                "message": f"{provider_name} video provider configuration saved"
+            }))
+        except Exception as e:
+            logger.error(f"Error saving video provider: {e}", exc_info=True)
+            return jsonify(error_response(str(e), status_code=500)), 500
 

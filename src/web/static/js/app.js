@@ -13,6 +13,19 @@ let comparisonModels = [];
 let autoRouting = false;
 let isSending = false; // Prevent duplicate sends
 
+// Debounce utility function
+function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+        const later = () => {
+            clearTimeout(timeout);
+            func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+    };
+}
+
 // Multiple chat sessions/tabs
 let chatTabs = [];
 let activeTabId = null;
@@ -25,7 +38,7 @@ const chatTemplates = {
             name: 'General Assistant',
             icon: '💬',
             description: 'Helpful and friendly AI assistant',
-            systemPrompt: 'You are a helpful, friendly, and knowledgeable AI assistant. Provide clear, accurate, and helpful responses.',
+            systemPrompt: '',
             suggestedModel: null,
             temperature: 0.7
         },
@@ -34,7 +47,7 @@ const chatTemplates = {
             name: 'Coding Assistant',
             icon: '💻',
             description: 'Expert programming help',
-            systemPrompt: 'You are an expert software developer and programming assistant. Write clean, efficient, and well-documented code. Explain your solutions clearly.',
+            systemPrompt: 'You are an expert software developer and programming assistant.',
             suggestedModel: 'codellama',
             temperature: 0.3
         },
@@ -43,7 +56,7 @@ const chatTemplates = {
             name: 'Writing Assistant',
             icon: '✍️',
             description: 'Creative and professional writing',
-            systemPrompt: 'You are a professional writer and editor. Help create engaging, well-structured, and polished written content. Provide suggestions for improvement.',
+            systemPrompt: 'You are a professional writer and editor.',
             suggestedModel: null,
             temperature: 0.8
         },
@@ -52,7 +65,7 @@ const chatTemplates = {
             name: 'Analyst',
             icon: '📊',
             description: 'Data analysis and insights',
-            systemPrompt: 'You are a data analyst and researcher. Analyze information thoroughly, provide insights, and support conclusions with evidence.',
+            systemPrompt: 'You are a data analyst and researcher.',
             suggestedModel: null,
             temperature: 0.5
         },
@@ -61,7 +74,7 @@ const chatTemplates = {
             name: 'Creative Writer',
             icon: '🎨',
             description: 'Creative storytelling and ideas',
-            systemPrompt: 'You are a creative writer and storyteller. Generate imaginative, engaging, and original content. Think outside the box.',
+            systemPrompt: 'You are a creative writer and storyteller.',
             suggestedModel: null,
             temperature: 1.0
         },
@@ -70,7 +83,7 @@ const chatTemplates = {
             name: 'Teacher',
             icon: '👨‍🏫',
             description: 'Educational explanations',
-            systemPrompt: 'You are a patient and knowledgeable teacher. Explain concepts clearly, use examples, and adapt to different learning styles.',
+            systemPrompt: 'You are a teacher.',
             suggestedModel: null,
             temperature: 0.7
         },
@@ -79,7 +92,7 @@ const chatTemplates = {
             name: 'Translator',
             icon: '🌐',
             description: 'Language translation',
-            systemPrompt: 'You are a professional translator. Provide accurate translations while preserving meaning, tone, and cultural context.',
+            systemPrompt: 'You are a professional translator.',
             suggestedModel: null,
             temperature: 0.3
         },
@@ -88,7 +101,7 @@ const chatTemplates = {
             name: 'Debug Helper',
             icon: '🐛',
             description: 'Find and fix bugs',
-            systemPrompt: 'You are a debugging expert. Analyze code, identify issues, and provide clear explanations of problems and solutions.',
+            systemPrompt: 'You are a debugging expert.',
             suggestedModel: 'codellama',
             temperature: 0.2
         }
@@ -673,7 +686,8 @@ function toggleBackendFolder(folderId) {
     }
 }
 
-function selectModel(modelName) {
+// Debounced model selection to prevent rapid switching
+const debouncedSelectModelInternal = debounce((modelName) => {
     if (!modelName) {
         console.error('No model name provided');
         return;
@@ -700,6 +714,11 @@ function selectModel(modelName) {
             saveChatTabs();
         }
     }
+}, 300); // 300ms debounce for model switching
+
+function selectModel(modelName) {
+    // Use debounced version to prevent rapid model switching
+    debouncedSelectModelInternal(modelName);
 }
 
 function updateModelSelectDisplay(modelName) {
@@ -1046,10 +1065,14 @@ function setupEventListeners() {
         newConversationBtn.addEventListener('click', createNewConversation);
     }
     
-    // Conversations search
+    // Conversations search with debouncing (500ms)
     if (conversationsSearch) {
+        const debouncedFilterConversations = debounce((searchTerm) => {
+            filterConversations(searchTerm);
+        }, 500);
+        
         conversationsSearch.addEventListener('input', (e) => {
-            filterConversations(e.target.value);
+            debouncedFilterConversations(e.target.value);
         });
     }
 }

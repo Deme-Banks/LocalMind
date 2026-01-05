@@ -29,16 +29,18 @@ def error_response(
     message: str,
     status_code: int = 500,
     error_type: str = None,
-    details: Dict[str, Any] = None
+    details: Dict[str, Any] = None,
+    troubleshooting: str = None
 ) -> Dict[str, Any]:
     """
-    Create an error response
+    Create an error response with enhanced context
     
     Args:
         message: Error message
         status_code: HTTP status code
         error_type: Optional error type
         details: Optional additional details
+        troubleshooting: Optional troubleshooting tips
         
     Returns:
         Error response dictionary
@@ -51,6 +53,20 @@ def error_response(
         response["error_type"] = error_type
     if details:
         response["details"] = details
+    if troubleshooting:
+        response["troubleshooting"] = troubleshooting
+    
+    # Add common troubleshooting tips based on error type
+    if not troubleshooting:
+        if error_type == "not_found":
+            response["troubleshooting"] = "Check that the resource exists and you have access to it."
+        elif error_type == "validation":
+            response["troubleshooting"] = "Verify all required fields are provided and have valid values."
+        elif error_type == "rate_limit":
+            response["troubleshooting"] = "Wait a moment and try again, or check your API rate limits."
+        elif status_code == 500:
+            response["troubleshooting"] = "Check server logs for more details. If the issue persists, try restarting the server."
+    
     return response
 
 

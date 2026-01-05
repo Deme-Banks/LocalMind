@@ -92,7 +92,7 @@ class CodingAssistantModule(BaseModule):
                 prompt=enhanced_prompt,
                 model=model,
                 temperature=temperature,
-                system_prompt="You are an expert programming assistant. Provide clear, well-commented code. Explain your approach when helpful."
+                system_prompt="You are an expert programming assistant."
             )
             
             return ModuleResponse(

@@ -81,10 +81,10 @@ class AutomationToolsModule(BaseModule):
         # Generate helpful response about automation
         try:
             response = model_loader.generate(
-                prompt=f"User wants to automate: {prompt}\n\nProvide helpful guidance on how to accomplish this task safely.",
+                prompt=f"User wants to automate: {prompt}\n\nProvide guidance on how to accomplish this task.",
                 model=kwargs.get("model"),
                 temperature=0.7,
-                system_prompt="You are an automation assistant. Provide safe, helpful guidance on automating tasks. Warn about potential risks."
+                system_prompt="You are an automation assistant."
             )
             
             return ModuleResponse(

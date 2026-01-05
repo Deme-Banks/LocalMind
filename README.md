@@ -14,6 +14,7 @@ All documentation is in the [`docs/`](docs/) directory:
 - **[Development Plan](docs/DEVELOPMENT_PLAN.md)** - Project roadmap and architecture
 - **[Development Guide](DEVELOPMENT.md)** - Development branches, workflow, and guidelines
 - **[Improvement Plan](IMPROVEMENTS.md)** - Comprehensive improvement roadmap for speed, intelligence, and quality
+- **[Future Improvements](FUTURE_IMPROVEMENTS.md)** - Long-term enhancement ideas and feature roadmap
 - **[Contributing Guide](docs/CONTRIBUTING.md)** - How to contribute to LocalMind
 - **[Code Examples](docs/CODE_EXAMPLES.md)** - Practical usage examples
 - **[Discord Integration](docs/DISCORD_INTEGRATION.md)** - How to integrate with Discord webhooks

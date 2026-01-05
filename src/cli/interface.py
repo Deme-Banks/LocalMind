@@ -162,7 +162,7 @@ def chat(ctx, prompt, model, system, temperature, stream):
                     response = model_loader.generate(
                         prompt=full_prompt,
                         model=model,
-                        system_prompt=system or "You are a helpful AI assistant.",
+                        system_prompt=system or "",
                         temperature=temperature or 0.7
                     )
                     

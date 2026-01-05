@@ -261,14 +261,37 @@ def setup_video_routes(app: Flask, server_instance):
             backend = request.args.get("backend", None)
             status = request.args.get("status", None)
             
-            videos = server_instance.video_manager.list_videos(
-                limit=limit,
+            # Get all videos (or filtered)
+            all_videos = server_instance.video_manager.list_videos(
+                limit=None,
                 search=search,
                 backend=backend,
                 status=status
             )
             
-            return jsonify(success_response({"videos": videos}))
+            # Pagination support
+            page = request.args.get("page", type=int, default=1)
+            per_page = request.args.get("per_page", type=int, default=50)
+            
+            # Calculate pagination
+            total = len(all_videos)
+            start = (page - 1) * per_page
+            end = start + per_page
+            paginated_videos = all_videos[start:end]
+            
+            # Apply limit if specified (for backward compatibility)
+            if limit:
+                paginated_videos = paginated_videos[:limit]
+            
+            return jsonify(success_response({
+                "videos": [v.model_dump() for v in paginated_videos],
+                "pagination": {
+                    "page": page,
+                    "per_page": per_page,
+                    "total": total,
+                    "pages": (total + per_page - 1) // per_page if per_page > 0 else 0
+                }
+            }))
         except Exception as e:
             logger.error(f"Error listing videos: {e}", exc_info=True)
             return jsonify(error_response(str(e), status_code=500)), 500
